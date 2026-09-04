@@ -8,12 +8,12 @@
 // prices and hours come from the site, not from the model.
 
 import { v } from "convex/values";
-import OpenAI from "openai";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
+import { chatCompletion } from "./lib/llm/openaiCompat";
 import { findDeadline } from "./lib/reader/deadline";
 import { latestUnanswered, type Msg } from "./lib/reader/waiting";
 import { bySource, pendingFor, propose, supersede } from "./proposals";
@@ -66,22 +66,39 @@ export function toDraft(content: string, req: DraftRequest): Draft {
   return { body: body.slice(0, 1200), basis: basis.length ? basis : [req.theirMessage.trim().slice(0, 300)] };
 }
 
+export const OPENAI_DEFAULT = "https://api.openai.com/v1";
+
+/**
+ * OPENAI_BASE_URL as people actually write it: blank, a bare host, no scheme, no /v1, a
+ * trailing slash. Always returns a full URL: the SDK reads the raw env var itself when given
+ * nothing, which is exactly the value being repaired here.
+ */
+export function normalizeBaseUrl(raw: string | undefined): string {
+  let s = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!s) return OPENAI_DEFAULT;
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  const u = new URL(s);
+  if (u.pathname === "" || u.pathname === "/") u.pathname = "/v1";
+  return u.toString().replace(/\/+$/, "");
+}
+
 export async function callModel(req: DraftRequest): Promise<Draft> {
   const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL ?? "gpt-5-mini";
+  const model = process.env.OPENAI_MODEL || "gpt-5-mini";
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set on the deployment");
-  const client = new OpenAI({ apiKey, baseURL: process.env.OPENAI_BASE_URL || undefined });
   const user = JSON.stringify({
     business: req.businessName, owner: req.ownerName, counterparty: req.counterparty, channel: req.channel,
     their_message: req.theirMessage, prior: req.prior, deadline_hint: req.deadlineHint ?? null,
     business_notes: req.businessNotes ?? null,
   });
-  const res = await client.chat.completions.create({
+  const content = await chatCompletion({
+    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
+    apiKey,
     model,
     messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }],
-    response_format: { type: "json_object" },
+    json: true,
   });
-  return toDraft(res.choices[0]?.message?.content ?? "", req);
+  return toDraft(content, req);
 }
 
 // ---- the two ends of the action -------------------------------------------------------------
