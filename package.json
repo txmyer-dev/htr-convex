@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p convex/tsconfig.json --noEmit"
+    "typecheck": "tsc -p convex/tsconfig.json --noEmit",
+    "deploy": "npm run build && netlify deploy --prod --dir dist"
   },
   "dependencies": {
     "convex": "^1.45.0",
