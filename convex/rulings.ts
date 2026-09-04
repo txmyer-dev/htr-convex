@@ -150,11 +150,18 @@ export async function ruleById(
 }
 
 export const ruleByLink = internalMutation({
-  args: { tenantId: v.id("tenants"), proposalId: v.id("proposals"), verdict: v.union(v.literal("sign"), v.literal("reject")) },
-  handler: async (ctx, { tenantId, proposalId, verdict }) => {
+  args: {
+    tenantId: v.id("tenants"),
+    proposalId: v.id("proposals"),
+    verdict: v.union(v.literal("sign"), v.literal("reject"), v.literal("edit")),
+    body: v.optional(v.string()),
+  },
+  handler: async (ctx, { tenantId, proposalId, verdict, body }) => {
     const tenant = await ctx.db.get(tenantId);
     if (!tenant) throw new Error("unknown tenant");
-    return await ruleById(ctx, tenant, proposalId, { kind: verdict }, "link");
+    const ruling: Verdict = verdict === "edit" ? { kind: "edit", body: (body ?? "").trim() } : { kind: verdict };
+    if (ruling.kind === "edit" && !ruling.body) return "Nothing to send: the words were empty.";
+    return await ruleById(ctx, tenant, proposalId, ruling, "link");
   },
 });
 

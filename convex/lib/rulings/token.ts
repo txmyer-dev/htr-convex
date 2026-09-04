@@ -10,7 +10,7 @@ async function hmacHex(secret: string, message: string): Promise<string> {
   return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export type LinkVerdict = "sign" | "reject";
+export type LinkVerdict = "sign" | "reject" | "edit";
 
 export async function rulingToken(secret: string, tenantId: string, proposalId: string, verdict: LinkVerdict): Promise<string> {
   return (await hmacHex(secret, `${tenantId}:${proposalId}:${verdict}`)).slice(0, 32);
@@ -40,8 +40,8 @@ export async function rulingLinks(
   secret: string,
   tenantId: string,
   proposalId: string,
-): Promise<{ sign: string; reject: string }> {
+): Promise<{ sign: string; reject: string; edit: string }> {
   const url = async (v: LinkVerdict) =>
     `${base}/${encodeURIComponent(tenantId)}/${encodeURIComponent(proposalId)}/${v}?t=${await rulingToken(secret, tenantId, proposalId, v)}`;
-  return { sign: await url("sign"), reject: await url("reject") };
+  return { sign: await url("sign"), reject: await url("reject"), edit: await url("edit") };
 }

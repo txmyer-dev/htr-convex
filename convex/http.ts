@@ -75,12 +75,29 @@ http.route({
 const ruleByLink = httpAction(async (ctx, req) => {
   const [slug, proposalId, verdict] = segments(req.url, "/rulings/");
   const t = new URL(req.url).searchParams.get("t") ?? "";
-  if (verdict !== "sign" && verdict !== "reject") return page("<p>verdict must be sign or reject</p>", 400);
+  if (verdict !== "sign" && verdict !== "reject" && verdict !== "edit") return page("<p>verdict must be sign, reject, or edit</p>", 400);
   if (!(await verifyRulingToken(rulingSecret(), slug, proposalId, verdict, t))) return page("<p>That link is not valid.</p>", 401);
   const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
   if (!tenant) return page("<p>Unknown tenant.</p>", 404);
-  const note = await ctx.runMutation(internal.rulings.ruleByLink, { tenantId: tenant._id, proposalId: proposalId as Id<"proposals">, verdict });
   const back = `${siteUrl()}/r/${encodeURIComponent(slug)}?k=${await surfaceKey(slug)}`;
+  let body: string | undefined;
+  if (verdict === "edit") {
+    if (req.method === "GET") {
+      // The edit form: the current words, ready to be replaced. Posting them signs the draft.
+      const p = await ctx.runQuery(internal.proposals.get, { proposalId: proposalId as Id<"proposals"> });
+      if (!p || p.tenantId !== tenant._id || p.status !== "pending") return page(`<p>Nothing waiting under that draft.</p><p><a href="${back}">Everything waiting →</a></p>`);
+      return page(
+        `<h1 style="font-size:1.2rem">Your words to ${escapeHtml(p.toName || p.toAddress)}</h1>` +
+          (p.basis[0] ? `<p style="color:#5b6070">“${escapeHtml(p.basis[0])}”</p>` : "") +
+          `<form method="post"><textarea name="words" rows="8" style="width:100%;font:inherit;padding:.6rem;border:1px solid #d9d8d1;border-radius:8px">${escapeHtml(p.body)}</textarea>` +
+          `<p><button type="submit" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;border:0;font:inherit">Send my words</button> ` +
+          `<a href="${back}" style="margin-left:8px">Back</a></p></form>`,
+      );
+    }
+    const form = await req.formData();
+    body = String(form.get("words") ?? "");
+  }
+  const note = await ctx.runMutation(internal.rulings.ruleByLink, { tenantId: tenant._id, proposalId: proposalId as Id<"proposals">, verdict, body });
   return page(`<p>${escapeHtml(note)}</p><p><a href="${back}">Everything waiting →</a></p>`);
 });
 http.route({ pathPrefix: "/rulings/", method: "GET", handler: ruleByLink });
@@ -122,7 +139,8 @@ http.route({
           (p.basis[0] ? `<p style="color:#5b6070;margin:8px 0">“${escapeHtml(p.basis[0])}”</p>` : "") +
           `<p style="white-space:pre-wrap">${escapeHtml(p.body)}</p>` +
           `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
-          `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none">Skip</a></div>`,
+          `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
+          `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a></div>`,
       );
     }
     const recent = rows.filter((p) => p.status !== "pending").slice(0, 20)

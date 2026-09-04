@@ -82,14 +82,15 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest): P
   const cards: string[] = [];
   for (const { n, proposalId, item } of built.items) {
     const links = await rulingLinks(base, secret, tenant.slug, proposalId);
-    linkLines.push(`${n}  Send: ${links.sign}\n    Skip: ${links.reject}`);
+    linkLines.push(`${n}  Send: ${links.sign}\n    Skip: ${links.reject}\n    Edit: ${links.edit}`);
     const ask = item.basis[0] ? `<p style="color:#5b6070;margin:0 0 8px">“${escapeHtml(item.basis[0])}”</p>` : "";
     cards.push(
       `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0">` +
         `<div style="font-weight:600;margin-bottom:6px">${n} · ${escapeHtml(item.toName || item.toAddress)}</div>${ask}` +
         `<p style="white-space:pre-wrap;margin:0 0 12px">${escapeHtml(item.body)}</p>` +
         `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
-        `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none">Skip</a>` +
+        `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
+        `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a>` +
         `</div>`,
     );
   }

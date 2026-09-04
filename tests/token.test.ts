@@ -21,5 +21,6 @@ describe("ruling tokens", () => {
     const links = await rulingLinks("https://x.convex.site/rulings", "s3cret", "tony", "p1");
     expect(links.sign).toBe(`https://x.convex.site/rulings/tony/p1/sign?t=${await rulingToken("s3cret", "tony", "p1", "sign")}`);
     expect(links.reject).toContain("/reject?t=");
+    expect(links.edit).toContain("/edit?t=");
   });
 });
