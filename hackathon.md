@@ -12,7 +12,7 @@
 - **Auth:** none
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-05T01:00:00Z
+- **Last updated:** 2026-09-05T01:35:00Z
 
 ## Log
 
@@ -67,3 +67,13 @@ digest's own numbered lines came back as rulings ("2 waiting on you." read as dr
 "waiting on you."). The stripper now cuts on a bare "wrote:" (and walks back to the "On" line),
 the rule, and the header block. Three tests on those shapes (`convex/lib/rulings/parse.ts`,
 `tests/parse.test.ts`).
+
+### 2026-09-05 - first ruling by email reply, live
+The last untested path closed. A counterparty email from a Gmail account to the tenant inbox
+became a draft in three seconds and a digest to the owner sixty seconds later. The owner replied
+from Gmail with "1 tell Felix yes, December is fine" and the quoted digest below it; the webhook
+landed in `mail.receive`, the owner's address matched, the quote was stripped, the number
+resolved through the latest digest, the draft was edited to the owner's words and signed, the
+confirmation went back in the owner's thread, and the reply went out to the counterparty in
+their thread, all within four seconds of the reply arriving. The ruling row holds the raw reply
+verbatim, quoted digest included: the correction log in the owner's own words.
