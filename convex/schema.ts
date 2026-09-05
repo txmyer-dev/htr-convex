@@ -106,6 +106,7 @@ export default defineSchema({
     raw: v.string(), // the owner's own words
     verdict: v.string(), // sign | reject | edit | expired | command:<name> | ignored
     editBody: v.optional(v.string()),
+    draftBody: v.optional(v.string()), // on an edit: what the draft said before the owner's words replaced it
     at: v.number(),
   }).index("by_tenant_at", ["tenantId", "at"]),
 

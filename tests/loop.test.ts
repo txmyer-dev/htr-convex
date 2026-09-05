@@ -133,6 +133,31 @@ describe("the loop", () => {
     expect(p).toMatchObject({ status: "signed", body: "Tell Marco Tuesday works", edited: true });
   });
 
+  test("an edit is a lesson: the next draft for this tenant sees the draft and the owner's words", async () => {
+    const pid = await draft();
+    await t.mutation(internal.digest.build, { tenantId });
+    await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1 Yep, the Harlow is $185. Come by Friday, I'll have it out." });
+    const r = (await t.run((ctx) => ctx.db.query("rulings").first()))!;
+    expect(r).toMatchObject({ verdict: "edit", proposalId: pid, draftBody: "Yes, the Harlow, $185. Want it held?", editBody: "Yep, the Harlow is $185. Come by Friday, I'll have it out." });
+
+    // a new message, from someone else: the drafter's context carries the correction
+    await t.mutation(internal.mail.receive, { tenantId, mail: mail({ fromAddress: "sam@example.com", fromName: "Sam", threadId: "thr_3", text: "Any wallets under $100?" }) });
+    const m2 = (await t.run((ctx) => ctx.db.query("messages").order("desc").first()))!;
+    const c = (await t.query(internal.drafter.context, { messageId: m2._id }))!;
+    expect(c.lessons).toEqual([{
+      theirMessage: "Do you have a leather bag under $200?",
+      draft: "Yes, the Harlow, $185. Want it held?",
+      sent: "Yep, the Harlow is $185. Come by Friday, I'll have it out.",
+    }]);
+
+    // a plain sign is not a lesson
+    await t.mutation(internal.drafter.record, { messageId: m2._id, body: "A few, from $60.", basis: [], toName: "Sam" });
+    await t.mutation(internal.digest.build, { tenantId });
+    await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1" });
+    const again = (await t.query(internal.drafter.context, { messageId: m2._id }))!;
+    expect(again.lessons).toHaveLength(1);
+  });
+
   test("skip, help, later, hold, and the digest command", async () => {
     const pid = await draft();
     await t.mutation(internal.digest.build, { tenantId });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { extractJson, normalizeBaseUrl, toDraft, type DraftRequest } from "../convex/drafter";
+import { extractJson, normalizeBaseUrl, toDraft, userPayload, type DraftRequest } from "../convex/drafter";
 import { chatCompletion, contentOf } from "../convex/lib/llm/openaiCompat";
 
 describe("contentOf", () => {
@@ -69,5 +69,19 @@ describe("toDraft", () => {
   test("an empty draft is an error", () => {
     expect(() => toDraft('{"body":""}', req)).toThrow(/empty draft/);
     expect(extractJson("nope")).toBeNull();
+  });
+});
+
+describe("userPayload", () => {
+  const req: DraftRequest = {
+    businessName: "Tony Myers", ownerName: "Tony", counterparty: "Marco", channel: "email",
+    theirMessage: "Do you have a leather bag under $200?", prior: [],
+  };
+  test("no corrections yet: the key is null, not missing, so the model sees the shape", () => {
+    expect(JSON.parse(userPayload(req)).owner_corrections).toBeNull();
+  });
+  test("the owner's corrections ride along as draft -> sent pairs", () => {
+    const p = JSON.parse(userPayload({ ...req, lessons: [{ theirMessage: "under $200?", draft: "Yes, the Harlow, $185.", sent: "Yep, $185, come by." }] }));
+    expect(p.owner_corrections).toEqual([{ their_message: "under $200?", first_draft: "Yes, the Harlow, $185.", owner_sent: "Yep, $185, come by." }]);
   });
 });

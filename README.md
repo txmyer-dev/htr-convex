@@ -94,6 +94,12 @@ Public Convex functions (the React app): `proposals.list`, `tenants.surface`,
 | `hold` · `hold until 9` | hold the room; drafts keep stacking |
 | `?` | send the digest now |
 
+An edit is also a lesson. The draft it replaced and the words that went out are kept on the
+ruling, and the drafter puts the owner's last five corrections for this tenant in front of the
+model before it writes. The owner is never asked to confirm twice: the correction is the ruling
+and the training at once. Edits only (a skip says "not this" without saying what), and never
+across tenants.
+
 A reply from any address other than the owner's is logged and ignored. Quoted text below the
 owner's words is stripped before parsing. A number resolves only through the latest digest, and
 only to a draft still pending: a stale digest cannot rule a newer draft.

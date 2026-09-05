@@ -33,7 +33,8 @@ not, so what HTR had stolen from switchboard (config, jobs, web app, voice tools
 
 New here, no source: `convex/schema.ts`, `convex/install.ts`, `convex/surface.ts`,
 `convex/knowledge.ts`, `convex/lib/mail/{svix,inbound,agentmail}.ts`, `convex/lib/time.ts`,
-`src/` (the live surface).
+`convex/lib/drafter/lessons.ts` (the owner's edits as the drafter's lessons), `src/` (the live
+surface).
 
 Not carried over (yet): voice (Retell's six in-call tools, `post_call`), Twilio SMS, the
 Gmail adapter, `python -m htr.check`. When HTR steals this build back, `STEALS.md` there gets

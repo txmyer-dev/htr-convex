@@ -32,7 +32,11 @@ export async function latestDigest(ctx: MutationCtx, tenantId: Id<"tenants">) {
   return await ctx.db.query("digests").withIndex("by_tenant_sent", (q) => q.eq("tenantId", tenantId)).order("desc").first();
 }
 
-/** The correction log: every ruling, every edit, every outcome, in the owner's own words. */
+/**
+ * The correction log: every ruling, every edit, every outcome, in the owner's own words. An edit
+ * keeps the draft it replaced next to the words that went out: that pair is what the drafter
+ * learns from (lib/drafter/lessons.ts), with no further word from the owner.
+ */
 async function record(
   ctx: MutationCtx,
   tenantId: Id<"tenants">,
@@ -42,8 +46,9 @@ async function record(
   raw: string,
   verdict: string,
   editBody?: string,
+  draftBody?: string,
 ) {
-  await ctx.db.insert("rulings", { tenantId, proposalId, digestId, from, raw, verdict, editBody, at: Date.now() });
+  await ctx.db.insert("rulings", { tenantId, proposalId, digestId, from, raw, verdict, editBody, draftBody, at: Date.now() });
 }
 
 /** Apply one verdict to one pending proposal. Returns the line that tells the owner what happened. */
@@ -66,7 +71,7 @@ export async function applyVerdict(
   const edited = words ? (await edit(ctx, p._id, words)) !== null : false;
   const signed = await approve(ctx, p._id);
   if (signed === null) return `${n}: already ruled.`; // raced: someone else got there first
-  await record(ctx, tenant._id, p._id, digestId, from, raw, edited ? "edit" : "sign", edited ? words : undefined);
+  await record(ctx, tenant._id, p._id, digestId, from, raw, edited ? "edit" : "sign", edited ? words : undefined, edited ? p.body : undefined);
   await ctx.scheduler.runAfter(0, internal.mail.dispatch, { proposalId: p._id });
   return `Sending ${n} to ${who(p)}${edited ? " with your words" : ""}.`;
 }

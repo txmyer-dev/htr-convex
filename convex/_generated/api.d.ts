@@ -17,6 +17,7 @@ import type * as install from "../install.js";
 import type * as knowledge from "../knowledge.js";
 import type * as lib_digest_expiry from "../lib/digest/expiry.js";
 import type * as lib_digest_render from "../lib/digest/render.js";
+import type * as lib_drafter_lessons from "../lib/drafter/lessons.js";
 import type * as lib_llm_openaiCompat from "../lib/llm/openaiCompat.js";
 import type * as lib_mail_agentmail from "../lib/mail/agentmail.js";
 import type * as lib_mail_inbound from "../lib/mail/inbound.js";
@@ -51,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   knowledge: typeof knowledge;
   "lib/digest/expiry": typeof lib_digest_expiry;
   "lib/digest/render": typeof lib_digest_render;
+  "lib/drafter/lessons": typeof lib_drafter_lessons;
   "lib/llm/openaiCompat": typeof lib_llm_openaiCompat;
   "lib/mail/agentmail": typeof lib_mail_agentmail;
   "lib/mail/inbound": typeof lib_mail_inbound;

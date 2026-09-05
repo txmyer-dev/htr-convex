@@ -5,14 +5,17 @@
 //
 // OpenAI SDK, OpenAI-compatible: OPENAI_BASE_URL points it at Omniroute or anything else that
 // speaks chat completions. The business site (Firecrawl, knowledge table) is in the prompt so
-// prices and hours come from the site, not from the model.
+// prices and hours come from the site, not from the model. So are the owner's last corrections:
+// each edit ruling is a draft and the words the owner sent instead, and the model is told to
+// match the owner, not the earlier drafts. The owner never confirms twice; the edit is the lesson.
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
+import { MAX_LESSONS, toLessons, type Lesson } from "./lib/drafter/lessons";
 import { chatCompletion } from "./lib/llm/openaiCompat";
 import { findDeadline } from "./lib/reader/deadline";
 import { latestUnanswered, type Msg } from "./lib/reader/waiting";
@@ -24,6 +27,8 @@ export const SYSTEM =
   "a greeting and a sign-off with the owner's first name, under 900 characters. " +
   "Never invent facts, prices, or dates that are not in the input or the business notes. If the request " +
   "needs the owner's decision, say the owner will confirm. " +
+  "owner_corrections, when present, are earlier drafts and what the owner actually sent instead: match the " +
+  "owner's wording, length, and tone, never the earlier drafts. " +
   'Return JSON: {"body": string, "basis": [verbatim quotes from their message the reply rests on]}.';
 
 export type DraftRequest = {
@@ -35,6 +40,7 @@ export type DraftRequest = {
   prior: string[]; // earlier lines in the thread, oldest first, "in: ..." / "out: ..."
   deadlineHint?: string;
   businessNotes?: string; // what the site says, trimmed
+  lessons?: Lesson[]; // the owner's recent corrections for this tenant, newest first
 };
 
 export type Draft = { body: string; basis: string[] };
@@ -82,20 +88,28 @@ export function normalizeBaseUrl(raw: string | undefined): string {
   return u.toString().replace(/\/+$/, "");
 }
 
+/** The user turn: everything the model may draw on, as one JSON object. */
+export function userPayload(req: DraftRequest): string {
+  const lessons = req.lessons ?? [];
+  return JSON.stringify({
+    business: req.businessName, owner: req.ownerName, counterparty: req.counterparty, channel: req.channel,
+    their_message: req.theirMessage, prior: req.prior, deadline_hint: req.deadlineHint ?? null,
+    business_notes: req.businessNotes ?? null,
+    owner_corrections: lessons.length
+      ? lessons.map((l) => ({ their_message: l.theirMessage, first_draft: l.draft, owner_sent: l.sent }))
+      : null,
+  });
+}
+
 export async function callModel(req: DraftRequest): Promise<Draft> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || "gpt-5-mini";
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set on the deployment");
-  const user = JSON.stringify({
-    business: req.businessName, owner: req.ownerName, counterparty: req.counterparty, channel: req.channel,
-    their_message: req.theirMessage, prior: req.prior, deadline_hint: req.deadlineHint ?? null,
-    business_notes: req.businessNotes ?? null,
-  });
   const content = await chatCompletion({
     baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
     apiKey,
     model,
-    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }],
+    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: userPayload(req) }],
     json: true,
   });
   return toDraft(content, req);
@@ -109,6 +123,7 @@ export type DraftContext = {
   thread: Doc<"messages">[];
   contact: Doc<"contacts"> | null;
   knowledge: Doc<"knowledge">[];
+  lessons: Lesson[];
   already: boolean;
 };
 
@@ -133,10 +148,27 @@ export const context = internalQuery({
       .withIndex("by_tenant_address", (q) => q.eq("tenantId", msg.tenantId).eq("address", msg.fromAddress))
       .unique();
     const knowledge = await ctx.db.query("knowledge").withIndex("by_tenant_url", (q) => q.eq("tenantId", msg.tenantId)).take(8);
+    const lessons = await recentLessons(ctx, msg.tenantId);
     const already = msg.vendorRef ? await bySource(ctx, msg.tenantId, msg.channel, msg._id) : null;
-    return { msg, tenant, thread: [...thread, ...outbound].sort((a, b) => a.at - b.at), contact, knowledge, already: already !== null };
+    return { msg, tenant, thread: [...thread, ...outbound].sort((a, b) => a.at - b.at), contact, knowledge, lessons, already: already !== null };
   },
 });
+
+/**
+ * The owner's last edits for this tenant, newest first: the draft each replaced and the words
+ * that went out. The counterparty's side is the basis the draft rested on.
+ */
+async function recentLessons(ctx: QueryCtx, tenantId: Id<"tenants">): Promise<Lesson[]> {
+  const recent = await ctx.db.query("rulings").withIndex("by_tenant_at", (q) => q.eq("tenantId", tenantId)).order("desc").take(60);
+  const rows: Array<{ theirMessage?: string; draft?: string; sent?: string }> = [];
+  for (const r of recent) {
+    if (r.verdict !== "edit" || !r.editBody || !r.draftBody) continue;
+    const p = r.proposalId ? await ctx.db.get(r.proposalId) : null;
+    rows.push({ theirMessage: p?.basis.join("\n"), draft: r.draftBody, sent: r.editBody });
+    if (rows.length >= MAX_LESSONS * 2) break; // toLessons drops the empty pairs; leave it room
+  }
+  return toLessons(rows);
+}
 
 export const record = internalMutation({
   args: {
@@ -202,7 +234,7 @@ export const draft = internalAction({
     const req: DraftRequest = {
       businessName: tenant.displayName, ownerName: tenant.owner.name, counterparty: name ?? msg.fromAddress,
       channel: msg.channel, theirMessage: (msg.meta.subject ? `Subject: ${msg.meta.subject}\n\n` : "") + msg.body,
-      prior, deadlineHint: hint, businessNotes: trimNotes(c.knowledge),
+      prior, deadlineHint: hint, businessNotes: trimNotes(c.knowledge), lessons: c.lessons,
     };
     const d = await callModel(req);
     return await ctx.runMutation(internal.drafter.record, { messageId, body: d.body, basis: d.basis, deadline, toName: name });

@@ -12,7 +12,7 @@
 - **Auth:** none
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-05T01:35:00Z
+- **Last updated:** 2026-09-05T02:05:00Z
 
 ## Log
 
@@ -77,3 +77,15 @@ resolved through the latest digest, the draft was edited to the owner's words an
 confirmation went back in the owner's thread, and the reply went out to the counterparty in
 their thread, all within four seconds of the reply arriving. The ruling row holds the raw reply
 verbatim, quoted digest included: the correction log in the owner's own words.
+
+### 2026-09-05 - the edit is the lesson
+The owner's rule, decided after the first live edit: the agent drafts; if the owner edits, the
+words go out as written, no rewrite, no second confirmation; the agent learns from the edit after
+the fact. So an edit ruling now keeps the draft it replaced next to the owner's words
+(`rulings.draftBody`), and the drafter's context query reads the tenant's last five edits, newest
+first, as draft-to-sent pairs. They ride in the prompt as `owner_corrections` with one line of
+instruction: match the owner's wording, length, and tone, never the earlier drafts. Edits only
+(a skip says nothing about what instead) and per tenant only. Pure module
+`convex/lib/drafter/lessons.ts` with tests; a loop test proves an edit by email reply shows up
+in the next draft's context and a plain sign does not (`convex/rulings.ts`, `convex/drafter.ts`,
+`convex/schema.ts`, `tests/lessons.test.ts`, `tests/loop.test.ts`, `tests/drafter.test.ts`).
