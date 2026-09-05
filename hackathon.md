@@ -12,7 +12,7 @@
 - **Auth:** none
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-04T22:42:19Z
+- **Last updated:** 2026-09-05T01:00:00Z
 
 ## Log
 
@@ -58,3 +58,12 @@ found" as what the business says. The scraper now refuses 4xx and 5xx pages and 
 Hackathon setup: the official Convex plugin, the managed Convex AI files, and this log.
 Frontend hosting chosen as Convex static hosting; the surface will move off Netlify to
 `https://<deployment>.convex.site` in a later build step.
+
+### 2026-09-05 - quoting shapes
+Preparing the first live ruling by email reply: the quote stripper knew Gmail's one-line
+"On ... wrote:" and ">" marks only. Gmail wraps the attribution over two lines on a phone, and
+Outlook quotes with a "____" rule and a "From:" header block and no ">" marks at all, so the
+digest's own numbered lines came back as rulings ("2 waiting on you." read as draft 2, edited to
+"waiting on you."). The stripper now cuts on a bare "wrote:" (and walks back to the "On" line),
+the rule, and the header block. Three tests on those shapes (`convex/lib/rulings/parse.ts`,
+`tests/parse.test.ts`).

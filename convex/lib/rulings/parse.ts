@@ -100,13 +100,30 @@ export function isEmpty(p: ParsedReply): boolean {
 
 /**
  * An email reply carries the quoted digest below the owner's words. Everything from the first
- * quote marker down is the machine's own text coming back, not a ruling.
+ * quote marker down is the machine's own text coming back, not a ruling. The markers are the
+ * ones mail clients actually write: ">" lines and "On ... wrote:" (Gmail, Apple Mail; Gmail
+ * wraps the attribution over two lines, "On ...\nwrote:", so a bare "wrote:" line counts too),
+ * "-----Original Message-----", and the "____" rule with a "From:" header block (Outlook, which
+ * quotes without ">" marks). Without the cut, the digest's own numbered lines read as rulings.
  */
 export function stripQuoted(text: string): string {
   const lines = text.split(/\r?\n/);
-  const cut = lines.findIndex((l) => {
+  let cut = lines.findIndex((l) => {
     const t = l.trim();
-    return t.startsWith(">") || /^On .+ wrote:$/.test(t) || /^-{2,}\s*Original Message/i.test(t);
+    return (
+      t.startsWith(">") ||
+      /^On .+ wrote:$/.test(t) ||
+      /^wrote:$/.test(t) ||
+      /^-{2,}\s*Original Message/i.test(t) ||
+      /^_{4,}$/.test(t) ||
+      /^From:\s.+@/.test(t)
+    );
   });
+  if (cut !== -1 && /^wrote:$/.test(lines[cut].trim())) {
+    // The wrapped attribution: the "On ..." line is one or two lines up.
+    for (let i = cut - 1; i >= Math.max(0, cut - 2); i--) {
+      if (/^On .+/.test(lines[i].trim())) { cut = i; break; }
+    }
+  }
   return (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 }

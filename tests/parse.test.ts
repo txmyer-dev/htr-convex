@@ -71,7 +71,24 @@ describe("email replies", () => {
     expect(p.unparsed).toEqual([]);
   });
 
+  test("Gmail wraps the attribution over two lines", () => {
+    const mail = "1\n\nOn Thu, Sep 4, 2026 at 6:59 PM Tony Myers <tony-6311@agentmail.to>\nwrote:\n\n> 2 waiting on you.\n>\n> 1 Sam Lee (email, Sat): ...";
+    expect(stripQuoted(mail)).toBe("1");
+    expect(parseReply(stripQuoted(mail)).rulings).toEqual([{ n: 1, verdict: { kind: "sign" } }]);
+  });
+
+  test("Outlook quotes with a rule and a header block, no > marks", () => {
+    const mail =
+      "1 tell them Tuesday works\r\n\r\n________________________________\r\nFrom: Tony Myers <tony-6311@agentmail.to>\r\n" +
+      "Sent: Thursday, September 4, 2026 6:59 PM\r\nTo: txmyer@gmail.com\r\nSubject: 2 waiting on you\r\n\r\n2 waiting on you.\r\n1 Sam Lee (email, Sat)\r\n";
+    expect(stripQuoted(mail)).toBe("1 tell them Tuesday works");
+    expect(parseReply(stripQuoted(mail)).rulings).toEqual([{ n: 1, verdict: { kind: "edit", body: "tell them Tuesday works" } }]);
+    // The header block alone (some mobile clients skip the rule) is enough to cut on.
+    expect(stripQuoted("2 no\n\nFrom: Hold the Room <tony-6311@agentmail.to>\nSent: today\n\n2 waiting on you.")).toBe("2 no");
+  });
+
   test("a plain reply survives untouched", () => {
     expect(stripQuoted("all")).toBe("all");
+    expect(stripQuoted("1 From the top, tell them we open at 9")).toBe("1 From the top, tell them we open at 9");
   });
 });
