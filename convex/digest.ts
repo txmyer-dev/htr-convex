@@ -13,7 +13,7 @@ import { appendEvent } from "./events";
 import { renderDigest, type DigestItem } from "./lib/digest/render";
 import { rulingLinks } from "./lib/rulings/token";
 import { pendingFor } from "./proposals";
-import { rulingSecret, siteUrl, surfaceKey } from "./surface";
+import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
 
 export const DEBOUNCE_MS = 60_000;
 
@@ -77,7 +77,7 @@ export const setRef = internalMutation({
 export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest): Promise<{ subject: string; text: string; html: string }> {
   const base = `${siteUrl()}/rulings`;
   const secret = rulingSecret();
-  const surface = `${siteUrl()}/r/${encodeURIComponent(tenant.slug)}?k=${await surfaceKey(tenant.slug)}`;
+  const surface = await liveSurfaceUrl(tenant.slug);
   const linkLines: string[] = [];
   const cards: string[] = [];
   for (const { n, proposalId, item } of built.items) {

@@ -2,18 +2,21 @@
 //
 //   POST /webhooks/{slug}/mail                AgentMail: a ruling from the owner, or an inbound email
 //   GET|POST /rulings/{slug}/{id}/{verdict}?t= the Send / Skip links; token-signed
-//   GET  /r/{slug}?k=                          the ruling surface (server-rendered; the Vite app is the live one)
+//   GET  /r/{slug}?k=                          the ruling surface, server-rendered (works without JS)
 //   GET  /tenants/{slug}/proposals?k=          every proposal and its status, JSON
 //   GET  /healthz
+//   GET  /  and everything else                the live surface (src/, built and uploaded by the static hosting
+//                                              component; /?t={slug}&k= is the owner's link)
 
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { httpRouter } from "convex/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
-import { rulingSecret, siteUrl, surfaceKey } from "./surface";
+import { liveSurfaceUrl, rulingSecret, siteUrl, surfaceKey } from "./surface";
 import type { ProposalView } from "./views";
 
 const http = httpRouter();
@@ -79,7 +82,7 @@ const ruleByLink = httpAction(async (ctx, req) => {
   if (!(await verifyRulingToken(rulingSecret(), slug, proposalId, verdict, t))) return page("<p>That link is not valid.</p>", 401);
   const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
   if (!tenant) return page("<p>Unknown tenant.</p>", 404);
-  const back = `${siteUrl()}/r/${encodeURIComponent(slug)}?k=${await surfaceKey(slug)}`;
+  const back = await liveSurfaceUrl(slug);
   let body: string | undefined;
   if (verdict === "edit") {
     if (req.method === "GET") {
@@ -156,5 +159,9 @@ http.route({
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+
+// Last: the built surface for "/" and any path no route above claims. Exact routes and the
+// longer prefixes above win, so the webhook and the ruling links keep their URLs.
+registerStaticRoutes(http, components.staticHosting);
 
 export default http;

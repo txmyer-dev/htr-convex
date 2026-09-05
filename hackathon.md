@@ -3,16 +3,16 @@
 - **Project:** Hold the Room
 - **Event:** Convex All Gas Hackathon
 - **What it does:** An email assistant that reads everything, drafts every reply in the owner's voice with quotes from the counterparty, and sends nothing until the owner rules by reply, signed link, or a live page.
-- **Live app:** not deployed
+- **Live app:** https://famous-spider-906.convex.site
 - **Repo:** private
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://famous-spider-906.convex.cloud
-- **Components:** none
+- **Components:** @convex-dev/static-hosting
 - **Convex features:** schema, tables, indexes, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries
 - **Auth:** none
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-05T02:05:00Z
+- **Last updated:** 2026-09-05T02:50:00Z
 
 ## Log
 
@@ -54,10 +54,10 @@ found" as what the business says. The scraper now refuses 4xx and 5xx pages and 
 `knowledge:clear` forgets a tenant's rows. Four tests on the scraper with a fake fetch
 (`convex/knowledge.ts`, `tests/knowledge.test.ts`).
 
-### 2026-09-04 - working tree
+### 2026-09-04 - e4757db
 Hackathon setup: the official Convex plugin, the managed Convex AI files, and this log.
-Frontend hosting chosen as Convex static hosting; the surface will move off Netlify to
-`https://<deployment>.convex.site` in a later build step.
+Frontend hosting chosen as Convex static hosting; the surface moves off Netlify to
+`https://<deployment>.convex.site` below.
 
 ### 2026-09-05 - quoting shapes
 Preparing the first live ruling by email reply: the quote stripper knew Gmail's one-line
@@ -89,3 +89,18 @@ instruction: match the owner's wording, length, and tone, never the earlier draf
 `convex/lib/drafter/lessons.ts` with tests; a loop test proves an edit by email reply shows up
 in the next draft's context and a plain sign does not (`convex/rulings.ts`, `convex/drafter.ts`,
 `convex/schema.ts`, `tests/lessons.test.ts`, `tests/loop.test.ts`, `tests/drafter.test.ts`).
+
+### 2026-09-05 - the surface on convex.site
+The live surface is served by the deployment itself. `@convex-dev/static-hosting` is registered
+in `convex/convex.config.ts` without an httpPrefix, and `convex/http.ts` registers the static
+catch-all after the app's own routes, so the AgentMail webhook and the Send / Skip / Edit links
+in every digest already sent keep their root URLs; `/` and any unclaimed path serve the built
+Vite app (SPA fallback on). The owner's link is now `https://<deployment>.convex.site/?t=<slug>&k=`,
+printed by `tenants:surfaceUrl` and used by the digest's "Everything, live" link and the
+ruling pages' back link; `/r/<slug>` stays as the server-rendered fallback. `npm run deploy`
+builds, deploys the backend, and uploads; `npm run deploy:dev` uploads to the dev deployment.
+Netlify config removed. Verified on the dev deployment: index and hashed assets served with
+long-term caching, SPA paths fall back to index, the webhook still answers 401 unsigned, the
+ruling and tenant routes still gate on their tokens, and the bundle points at this deployment's
+backend (`convex/convex.config.ts`, `convex/http.ts`, `convex/surface.ts`, `convex/digest.ts`,
+`convex/tenants.ts`, `package.json`).

@@ -11,7 +11,8 @@ told a reply is coming, and the item heads the next digest.
 
 This is the Convex rebuild of [HTR](https://github.com/txmyer-dev/HTR) (Python, SMS, live on a
 VPS) for the Convex "All Gas" hackathon. Same loop, new spine: the database is the queue, every
-ruling is one transaction, the surface is live without a websocket to write.
+ruling is one transaction, the surface is live without a websocket to write, and the whole thing,
+surface included, is served from one Convex deployment.
 
 ## The shape
 
@@ -63,9 +64,12 @@ For an anonymous local backend (no account): `npx convex deployment select local
 4. **Firecrawl**: `npx convex run knowledge:refresh '{"slug":"tony"}'` reads `business.site` into
    the `knowledge` table; the drafter puts it in front of the model so prices and hours come
    from the site.
-5. **The surface**: `npx convex run tenants:surfaceUrl '{"slug":"tony"}'` prints the owner's link.
-   `/r/<slug>?k=` is server-rendered on convex.site; `npm run dev:frontend` serves the live
-   React version at `/?t=<slug>&k=<key>`.
+5. **The surface**: `npx convex run tenants:surfaceUrl '{"slug":"tony"}'` prints the owner's link,
+   `https://<deployment>.convex.site/?t=<slug>&k=<key>`. The React app (`src/`) is built and
+   uploaded to the deployment by the static hosting component: `npm run deploy:dev` puts it on
+   the dev deployment, `npm run deploy` builds, deploys the backend, and uploads to production.
+   `/r/<slug>?k=` is the same surface server-rendered, for a client without JavaScript.
+   In development, `npm run dev` runs Vite with HMR against the dev backend.
 6. Send the inbox an email from any other address. A draft, then a digest, arrives at
    `owner.email`. Reply `1`, or tap Send. The loop is closed.
 
@@ -75,7 +79,8 @@ For an anonymous local backend (no account): `npx convex deployment select local
 |---|---|---|
 | `POST /webhooks/{slug}/mail` | AgentMail | Svix-verified; a ruling from the owner, or an inbound email |
 | `GET\|POST /rulings/{slug}/{id}/{sign\|reject}?t=` | the Send / Skip links | one tap rules; token binds tenant, proposal, verdict |
-| `GET /r/{slug}?k=` | you | the ruling page |
+| `GET /?t={slug}&k=` | you | the live surface (the React app, static hosting) |
+| `GET /r/{slug}?k=` | you | the same, server-rendered |
 | `GET /tenants/{slug}/proposals?k=` | you | every proposal and its status |
 | `GET /healthz` | anyone | liveness |
 
@@ -107,6 +112,7 @@ only to a draft still pending: a stale digest cannot rule a newer draft.
 ## Layout
 
 ```
+convex/convex.config.ts   components: static hosting (the surface, served from this deployment)
 convex/schema.ts          the spine: tenants, messages, proposals, rulings, digests, events, actions, contacts, knowledge
 convex/install.ts         the tenant block (client zero)
 convex/lib/               pure: rulings/parse, digest/render+expiry, reader/waiting+deadline+automated, mail/svix+inbound+agentmail, time
@@ -118,7 +124,7 @@ convex/mail.ts            AgentMail in (receive) and out (digest, confirmations,
 convex/knowledge.ts       Firecrawl: the business site
 convex/http.ts            the routes above
 convex/crons.ts           expiry, digest clock
-src/                      the live surface (Vite + React)
+src/                      the live surface (Vite + React), uploaded to convex.site by `npm run deploy`
 tests/                    node for lib, convex-test for the loop
 STEALS.md                 the ledger
 ```

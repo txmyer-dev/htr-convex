@@ -37,3 +37,11 @@ export function siteUrl(): string {
   if (!s) throw new Error("CONVEX_SITE_URL is not set");
   return s.replace(/\/$/, "");
 }
+
+/**
+ * The owner's link to the live surface: the React app, served by the static hosting component
+ * from the same origin as the HTTP routes. The key in the URL is the whole login.
+ */
+export async function liveSurfaceUrl(slug: string): Promise<string> {
+  return `${siteUrl()}/?t=${encodeURIComponent(slug)}&k=${await surfaceKey(slug)}`;
+}

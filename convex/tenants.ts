@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
-import { requireSurface as requireSurfaceKey, surfaceKey } from "./surface";
+import { liveSurfaceUrl, requireSurface as requireSurfaceKey } from "./surface";
 
 export const get = internalQuery({
   args: { tenantId: v.id("tenants") },
@@ -39,7 +39,7 @@ export const surface = query({
 /** `npx convex run tenants:surfaceUrl '{"slug":"tony"}'` prints the owner's link to the live surface. */
 export const surfaceUrl = internalQuery({
   args: { slug: v.string() },
-  handler: async (_ctx, { slug }) => `${process.env.CONVEX_SITE_URL}/r/${slug}?k=${await surfaceKey(slug)}`,
+  handler: async (_ctx, { slug }) => await liveSurfaceUrl(slug),
 });
 
 /** Actions check the surface key through this before doing anything on the owner's behalf. */
