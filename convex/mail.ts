@@ -11,10 +11,13 @@ import type { Doc } from "./_generated/dataModel";
 import { action, internalAction, internalMutation, type MutationCtx } from "./_generated/server";
 import { appendEvent, recordAction } from "./events";
 import { AgentMail } from "./lib/mail/agentmail";
-import { type InboundMail } from "./lib/mail/inbound";
+import { stripFooter, type InboundMail } from "./lib/mail/inbound";
 import { looksAutomated } from "./lib/reader/automated";
+import { acknowledgeSite } from "./facts";
+import { siteToken } from "./lib/rulings/token";
+import { SITE_HEADER } from "./lib/site/publish";
 import { handleOwnerReply } from "./rulings";
-import { siteUrl } from "./surface";
+import { siteSecret, siteUrl } from "./surface";
 
 export function client(): AgentMail {
   const apiKey = process.env.AGENTMAIL_API_KEY;
@@ -38,11 +41,32 @@ export const inboundMail = v.object({
 
 // ---- inbound ----------------------------------------------------------------------------------
 
-export type ReceiveOutcome = "duplicate" | "ruling" | "automated" | "drafting";
+export type ReceiveOutcome = "duplicate" | "ruling" | "automated" | "drafting" | "echo" | "site";
+
+/** The header the front door's pretend customer signs with; see demo.ts. */
+export const CUSTOMER_HEADER = "x-htr-customer";
 
 export async function receiveMail(ctx: MutationCtx, tenant: Doc<"tenants">, m: InboundMail): Promise<ReceiveOutcome> {
   if (!(await recordAction(ctx, tenant._id, `mail:${m.id}`, "receive_mail", { from: m.fromAddress }))) return "duplicate";
   await appendEvent(ctx, tenant._id, "mail.received", { from: m.fromAddress, subject: m.subject });
+
+  // The front door's pretend customer writes from one of our own inboxes (demo.ts), signed with
+  // the customer's name in a header; the name is honoured only from our own domain. The reply
+  // the owner signs goes back to that inbox, into whatever room holds it: mail from a demo inbox
+  // is never drafted there. Nothing answers itself.
+  let vouched = false; // a person by construction: skip the automated-mail nets (AgentMail adds List-Unsubscribe to everything it sends)
+  if (m.fromAddress.toLowerCase().endsWith("@agentmail.to")) {
+    const pool = await ctx.db.query("demoInboxes").withIndex("by_inbox", (q) => q.eq("inboxId", m.fromAddress.toLowerCase())).unique();
+    if (pool) {
+      await appendEvent(ctx, tenant._id, "mail.echo", { from: m.fromAddress, subject: m.subject });
+      return "echo";
+    }
+    const customer = m.headers?.[CUSTOMER_HEADER];
+    if (customer) {
+      m = { ...m, fromName: customer, text: stripFooter(m.text) };
+      vouched = true;
+    }
+  }
 
   if (m.fromAddress.toLowerCase() === tenant.owner.email.toLowerCase()) {
     const out = await handleOwnerReply(ctx, tenant, m.fromAddress, m.text);
@@ -54,7 +78,13 @@ export async function receiveMail(ctx: MutationCtx, tenant: Doc<"tenants">, m: I
     return "ruling";
   }
 
-  const automated = looksAutomated({ fromAddress: m.fromAddress, subject: m.subject, text: m.text, headers: m.headers });
+  // The web agent wrote back: an acknowledgment of a site request, never a draft.
+  if (tenant.business.webAgent && m.fromAddress.toLowerCase() === tenant.business.webAgent.toLowerCase()) {
+    await acknowledgeSite(ctx, tenant, m);
+    return "site";
+  }
+
+  const automated = vouched ? false : looksAutomated({ fromAddress: m.fromAddress, subject: m.subject, text: m.text, headers: m.headers });
   const messageId = await ctx.db.insert("messages", {
     tenantId: tenant._id, channel: "email", direction: "in", fromAddress: m.fromAddress, toAddress: m.to[0],
     body: m.text.slice(0, 8000), at: m.receivedAt, vendorRef: m.id, threadId: m.threadId,
@@ -64,7 +94,7 @@ export async function receiveMail(ctx: MutationCtx, tenant: Doc<"tenants">, m: I
     .query("contacts")
     .withIndex("by_tenant_address", (q) => q.eq("tenantId", tenant._id).eq("address", m.fromAddress))
     .unique();
-  if (contact) await ctx.db.patch(contact._id, { name: contact.name ?? m.fromName, lastSeenAt: m.receivedAt, count: contact.count + 1 });
+  if (contact) await ctx.db.patch(contact._id, { name: m.fromName ?? contact.name, lastSeenAt: m.receivedAt, count: contact.count + 1 });
   else await ctx.db.insert("contacts", { tenantId: tenant._id, address: m.fromAddress, name: m.fromName, lastSeenAt: m.receivedAt, count: 1 });
   if (automated) return "automated";
   await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId });
@@ -123,10 +153,12 @@ export const dispatch = internalAction({
     try {
       const inbox = inboxOf(tenant);
       const c = client();
-      const res = p.meta.messageId
-        ? await c.reply(inbox, p.meta.messageId, { text: p.body })
-        : await c.send(inbox, { to: [p.toAddress], subject: reSubject(p.meta.subject), text: p.body });
-      await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: res.messageId });
+      const res = p.kind === "site"
+        ? await sendSiteRequest(c, inbox, tenant, p)
+        : p.meta.messageId
+          ? await c.reply(inbox, p.meta.messageId, { text: p.body })
+          : await c.send(inbox, { to: [p.toAddress], subject: reSubject(p.meta.subject), text: p.body });
+      await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: res.messageId, threadId: res.threadId });
       return "sent";
     } catch (e) {
       await ctx.runMutation(internal.proposals.finishSend, { proposalId, error: String(e) });
@@ -134,6 +166,18 @@ export const dispatch = internalAction({
     }
   },
 });
+
+/**
+ * A site request: a new thread to the web agent, the owner copied, signed in a header so the
+ * agent acts only on what HTR sent. The thread id comes back so the agent's reply finds the proposal.
+ */
+async function sendSiteRequest(c: AgentMail, inbox: string, tenant: Doc<"tenants">, p: Doc<"proposals">) {
+  const token = await siteToken(siteSecret(), tenant.slug, p._id);
+  return await c.send(inbox, {
+    to: [p.toAddress], cc: [tenant.owner.email], subject: p.meta.subject ?? `Update ${tenant.business.site ?? "the site"}`, text: p.body,
+    headers: { [SITE_HEADER]: `${tenant.slug}:${p._id}:${token}` },
+  });
+}
 
 /** The surface's retry button for a failed send. */
 export const retrySend = action({
@@ -148,8 +192,8 @@ export const retrySend = action({
 
 /**
  * `npx convex run mail:provision '{"slug":"tony"}'`: make the inbox, point its webhook at this
- * deployment, remember both on the tenant. Returns the webhook secret once; set it with
- * `npx convex env set AGENTMAIL_WEBHOOK_SECRET whsec_...`.
+ * deployment, remember all of it on the tenant, secret included, so a second client needs no
+ * new environment variable. The secret is also returned once, for the log.
  */
 export const provision = action({
   args: { slug: v.string(), username: v.optional(v.string()) },
@@ -161,10 +205,12 @@ export const provision = action({
     if (!inboxId) {
       const inbox = await c.createInbox({ username: username ?? `${slug}-htr`, displayName: tenant.displayName });
       inboxId = inbox.inboxId; // an AgentMail inbox id is its address
-      await ctx.runMutation(internal.tenants.setChannels, { tenantId: tenant._id, inboxId, inboxAddress: inboxId });
     }
     const url = `${siteUrl()}/webhooks/${encodeURIComponent(slug)}/mail`;
     const hook = await c.createWebhook({ url, eventTypes: ["message.received"], inboxIds: [inboxId] });
+    await ctx.runMutation(internal.tenants.setChannels, {
+      tenantId: tenant._id, inboxId, inboxAddress: inboxId, webhookId: hook.webhookId, webhookSecret: hook.secret,
+    });
     return { inboxId, webhookId: hook.webhookId, webhookSecret: hook.secret, url };
   },
 });

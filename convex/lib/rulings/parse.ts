@@ -12,10 +12,11 @@
 //     later        leave everything pending until the next digest
 //     hold [until 9]   hold the room
 //     ?            send the digest now
+//     remember we open at 9 on Saturdays    teach the room a fact, outside any draft
 
 export type Verdict = { kind: "sign" } | { kind: "reject" } | { kind: "edit"; body: string };
 
-export type Command = "all" | "later" | "hold" | "digest";
+export type Command = "all" | "later" | "hold" | "digest" | "remember";
 
 export type ParsedReply = {
   rulings: Array<{ n: number; verdict: Verdict }>;
@@ -42,6 +43,7 @@ const NUMBERED = /^#?(\d{1,3})\s*[.:)\-–]?\s*([\s\S]*)$/;
 const HOLD = /^hold(?:\s+(?:until|till|til|to)\s+(.+))?$/i;
 const ALL = new Set(["all", "yes all", "send all", "all yes", "✅ all", "all ✅"]);
 const LATER = new Set(["later", "not now", "tomorrow"]);
+const REMEMBER = /^(?:remember|learn|note)(?:\s*:\s*|\s+)(.+)$/i;
 const DIGEST = new Set(["?", "digest", "status", "what's waiting", "whats waiting", "list"]);
 
 /** Strip variation selectors and whitespace so "✔️" and "✔" agree. */
@@ -89,6 +91,7 @@ export function parseReply(text: string): ParsedReply {
       const arg = (HOLD.exec(low)?.[1] ?? "").trim();
       out.commands.push({ command: "hold", arg: arg || null });
     } else if (DIGEST.has(low)) out.commands.push({ command: "digest", arg: null });
+    else if (REMEMBER.test(line)) out.commands.push({ command: "remember", arg: REMEMBER.exec(line)![1].trim() });
     else out.unparsed.push(line);
   }
   return out;

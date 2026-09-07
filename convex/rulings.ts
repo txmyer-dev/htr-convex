@@ -17,6 +17,7 @@ import { internalMutation, mutation, type MutationCtx } from "./_generated/serve
 import { appendEvent, recordAction } from "./events";
 import { holdNotice, isOverdue } from "./lib/digest/expiry";
 import { isEmpty, parseReply, stripQuoted, type Verdict } from "./lib/rulings/parse";
+import { learn } from "./facts";
 import { approve, edit, expire, pendingFor, propose, reject, type Proposal } from "./proposals";
 import { requireSurface } from "./surface";
 
@@ -24,7 +25,7 @@ type Tenant = Doc<"tenants">;
 
 export const HELP =
   'I read replies like: "1" or "1 yes" to send draft 1, "2 no" to skip it, ' +
-  '"3 your own words" to send those instead, "all", "later", "hold", or "?" for the list.';
+  '"3 your own words" to send those instead, "all", "later", "hold", "remember <a fact>", or "?" for the list.';
 
 const who = (p: Proposal) => p.toName || p.toAddress;
 
@@ -73,7 +74,9 @@ export async function applyVerdict(
   if (signed === null) return `${n}: already ruled.`; // raced: someone else got there first
   await record(ctx, tenant._id, p._id, digestId, from, raw, edited ? "edit" : "sign", edited ? words : undefined, edited ? p.body : undefined);
   await ctx.scheduler.runAfter(0, internal.mail.dispatch, { proposalId: p._id });
-  return `Sending ${n} to ${who(p)}${edited ? " with your words" : ""}.`;
+  // The draft named a gap and the owner answered it: the answer is the fact, in the owner's words.
+  const learned = edited && p.gap ? await learn(ctx, tenant._id, words, p.gap, p._id) : false;
+  return `Sending ${n} to ${who(p)}${edited ? " with your words" : ""}.${learned ? ` Remembered: ${p.gap}.` : ""}`;
 }
 
 // ---- inbound: the owner wrote back ----------------------------------------------------------
@@ -120,6 +123,9 @@ export async function handleOwnerReply(ctx: MutationCtx, tenant: Tenant, from: s
     } else if (command === "hold") {
       await setHold(ctx, tenant, arg ?? undefined);
       notes.push(`Holding the room${arg ? ` until ${arg}` : ""}. Drafts keep stacking; reply ? any time.`);
+    } else if (command === "remember") {
+      await record(ctx, tenant._id, undefined, digestId, from, text, "command:remember");
+      notes.push((await learn(ctx, tenant._id, arg ?? "")) ? `Remembered: ${arg}` : "I already knew that.");
     } else if (command === "digest") {
       await record(ctx, tenant._id, undefined, digestId, from, text, "command:digest");
       if ((await pendingFor(ctx, tenant._id)).length > 0) {
@@ -149,7 +155,7 @@ export async function ruleById(
 ): Promise<string> {
   const p = await ctx.db.get(proposalId);
   if (!p || p.tenantId !== tenant._id || p.status !== "pending") return "Nothing waiting under that draft.";
-  const note = await applyVerdict(ctx, tenant, p, p.digestNo ?? p.summary, verdict, p.digestId, via, `${via}:${verdict.kind}`);
+  const note = await applyVerdict(ctx, tenant, p, p.digestNo ?? "the draft", verdict, p.digestId, via, `${via}:${verdict.kind}`);
   await appendEvent(ctx, tenant._id, "ruling.applied", { rulings: 1, via });
   return note;
 }

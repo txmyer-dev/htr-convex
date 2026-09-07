@@ -14,20 +14,34 @@ VPS) for the Convex "All Gas" hackathon. Same loop, new spine: the database is t
 ruling is one transaction, the surface is live without a websocket to write, and the whole thing,
 surface included, is served from one Convex deployment.
 
+## Try it
+
+The front door is the live app itself: [famous-spider-906.convex.site](https://famous-spider-906.convex.site).
+Give it a name, your email, a business, and (optionally) its website. You get an inbox address
+and the live page. Email the address from any account, or press "Send a customer email" on the
+page. A draft in your voice is on the page in seconds, the numbered digest is in your own inbox a
+minute later, and your reply, or a tap, rules it. Thirty minutes later the inbox goes back to the pool
+and a day after that the demo is forgotten.
+
+Demo inboxes are leased from a small pool (`HTR_DEMO_POOL`, default 1: AgentMail's free plan
+allows three, client zero holds one, and the web agent holds one). If every inbox is taken, the door says when the next
+one frees.
+
 ## The shape
 
 ```
-                 AgentMail inbox (one per client)
+                 AgentMail inbox (one per client; demos lease from a pool)
    counterparty ──────────────▶ webhook ──▶ mail.receive (one transaction)
                                               │  from the owner?  → rulings.handleOwnerReply
                                               │  from a person?   → messages + contacts, schedule drafter.draft
                                               └  automated mail?  → recorded, never drafted
-   drafter.draft (action) ── reader: latestUnanswered ── OpenAI (JSON: body + basis) ── drafter.record
-                                                                                            │ propose, supersede older, requestDigest
+   drafter.draft (action) ── reader: latestUnanswered ── Firecrawl: the sender's site, on first contact
+                          ── OpenAI (JSON: body + basis; the business site and the sender's site in the prompt)
+                          ── drafter.record: propose (with grounding), supersede older, requestDigest
    digest.run (scheduled, debounced 60 s / at the owner's hour) ── build (numbering) ── one email to the owner
                                                                                         Send / Skip links · the live surface
    owner rules ── by reply · by link · from the surface ──▶ proposal pending → signed ──▶ mail.dispatch → sent
-   crons: hourly expiry (expire, hold notice, re-list) · digest clock
+   crons: hourly expiry (expire, hold notice, re-list) · digest clock · demo sweep every 15 min · weekly site re-read
 ```
 
 Everything in `convex/lib/` is pure and tested in node. Everything in `convex/*.ts` is a Convex
@@ -38,7 +52,7 @@ tests; scheduled actions are visible, never run.
 
 ```bash
 npm install
-npm test                      # 47 tests, offline
+npm test                      # 114 tests, offline
 npx convex dev                # first time: creates the deployment, writes .env.local
 ```
 
@@ -58,12 +72,19 @@ For an anonymous local backend (no account): `npx convex deployment select local
    npx convex env set FIRECRAWL_API_KEY ...
    ```
 3. **AgentMail**: `npx convex run mail:provision '{"slug":"tony"}'` creates the inbox, points its
-   `message.received` webhook at `https://<deployment>.convex.site/webhooks/tony/mail`, and
-   returns the webhook secret once: `npx convex env set AGENTMAIL_WEBHOOK_SECRET whsec_...`.
-   Counterparties write to the inbox address; the owner's digests come from it.
-4. **Firecrawl**: `npx convex run knowledge:refresh '{"slug":"tony"}'` reads `business.site` into
-   the `knowledge` table; the drafter puts it in front of the model so prices and hours come
-   from the site.
+   `message.received` webhook at `https://<deployment>.convex.site/webhooks/tony/mail`, and keeps
+   the webhook secret on the tenant (`AGENTMAIL_WEBHOOK_SECRET` in the environment is the
+   fallback for client zero). Counterparties write to the inbox address; the owner's digests
+   come from it.
+4. **Firecrawl**, in four places. `npx convex run knowledge:refresh '{"slug":"tony"}'` crawls
+   `business.site` (up to `HTR_CRAWL_PAGES`, default 20, one credit each) into the `knowledge`
+   table now, replacing what the site used to say; a Monday-morning cron reads every tenant's
+   site again, since sites change. The drafter reads the site front first, a slice of each page. And on the first message from a company address (never
+   webmail) the drafter reads the sender's own domain into the contact's `profile`, so the
+   reply knows who is writing. And when a message links a page ("can you quote this?"), the
+   drafter reads it, at most two per message. All of it goes in the prompt, and what the drafter
+   had in front of it is kept on the proposal as `grounding`: the card and the digest say
+   "Drafted from your site (sams-bakery.com), who they are (acme.com), and the page they sent."
 5. **The surface**: `npx convex run tenants:surfaceUrl '{"slug":"tony"}'` prints the owner's link,
    `https://<deployment>.convex.site/?t=<slug>&k=<key>`. The React app (`src/`) is built and
    uploaded to the deployment by the static hosting component: `npm run deploy:dev` puts it on
@@ -77,15 +98,35 @@ For an anonymous local backend (no account): `npx convex deployment select local
 
 | Route (convex.site) | Called by | Does |
 |---|---|---|
-| `POST /webhooks/{slug}/mail` | AgentMail | Svix-verified; a ruling from the owner, or an inbound email |
+| `POST /webhooks/{slug}/mail` | AgentMail | Svix-verified with the tenant's secret; a ruling from the owner, or an inbound email |
+| `POST /webhooks/pool/mail` | AgentMail | the same for every demo inbox: the event names the inbox, the inbox knows its secret and its lease |
 | `GET\|POST /rulings/{slug}/{id}/{sign\|reject}?t=` | the Send / Skip links | one tap rules; token binds tenant, proposal, verdict |
+| `GET /` | anyone | the front door: take an inbox, be the owner for thirty minutes |
 | `GET /?t={slug}&k=` | you | the live surface (the React app, static hosting) |
 | `GET /r/{slug}?k=` | you | the same, server-rendered |
 | `GET /tenants/{slug}/proposals?k=` | you | every proposal and its status |
 | `GET /healthz` | anyone | liveness |
 
 Public Convex functions (the React app): `proposals.list`, `tenants.surface`,
-`rulings.ruleFromSurface`, `mail.retrySend`. All take the surface key.
+`rulings.ruleFromSurface`, `mail.retrySend`, `demo.sendAsCustomer`, `demo.end`. All take the
+surface key. `demo.start` is the one public function that takes none: it is the front door.
+
+## Who may rule
+
+There are no accounts, by design: the owner already has an identity, their email address, and
+that is the only one the loop trusts.
+
+- **By reply**: a ruling by email is accepted only from `owner.email`; the Svix signature on the
+  webhook proves AgentMail delivered it, and the address on the message proves who wrote it.
+  Anyone else's reply is logged and ignored.
+- **By link**: every Send / Skip / Edit link carries an HMAC of tenant, proposal, and verdict
+  under `HTR_RULING_SECRET`. A leaked link can rule that one draft that one way and nothing else.
+- **On the surface**: the page URL carries a per-tenant key derived the same way. It is a
+  capability, like the links: whoever holds the owner's digest holds the room. The digest goes
+  only to `owner.email`.
+
+Convex Auth is the step after this, when a second person needs into the same room; a demo tenant
+made at the front door is the same shape, with the visitor's email as the owner's.
 
 ## Rulings
 
@@ -98,6 +139,7 @@ Public Convex functions (the React app): `proposals.list`, `tenants.surface`,
 | `later` | leave everything for the next digest |
 | `hold` · `hold until 9` | hold the room; drafts keep stacking |
 | `?` | send the digest now |
+| `remember parking is free after 6` | teach the room a fact, outside any draft |
 
 An edit is also a lesson. The draft it replaced and the words that went out are kept on the
 ruling, and the drafter puts the owner's last five corrections for this tenant in front of the
@@ -109,21 +151,70 @@ A reply from any address other than the owner's is logged and ignored. Quoted te
 owner's words is stripped before parsing. A number resolves only through the latest digest, and
 only to a draft still pending: a stale digest cannot rule a newer draft.
 
+## The second brain
+
+The site is the first brain: Firecrawl reads it, and drafts rest on it. But a site does not say
+everything, and the drafter is told not to guess. When a message asks for something that neither
+the site, the thread, nor anything the owner has said answers, the draft says the owner will
+confirm, and names what is missing as its `gap`. The digest line says so: `3 Sam (email): "Are
+you open Saturday?" → Tony will confirm. · you haven't told me: Saturday opening hours`. The
+owner answers the way they rule: `3 Yes, Saturdays 9 to 2`. Those words go out to Sam, and they
+are kept in the `facts` table as the answer to that question, in the owner's own words, and
+distilled once by the model into a plain statement about the business ("Dogs are welcome; there
+is a garage on 4th Street"), since a reply handed to a drafter as a fact comes back with its
+greeting. From then on every draft for this tenant has the owner's facts in front of it, alongside the site,
+and the card says "Drafted from your site (felaniam.cloud) and one thing you told me." A bare
+`remember ...` teaches a fact without waiting to be asked. Nothing is confirmed twice: the reply
+is the ruling and the lesson at once.
+
+## The site in pieces
+
+Twenty pages do not fit in a prompt. When a site is read, each page is cut into chunks under
+their headings (`lib/knowledge/chunk.ts`), the chunks are embedded in one call
+(`OPENAI_EMBED_MODEL`, 1536 dimensions), and they replace the tenant's old chunks in one
+transaction. The `chunks` table carries a Convex vector index filtered by tenant. At draft time
+the drafter embeds the message, asks the index for the eight closest chunks, puts the homepage's
+opening in front of them, and drafts from that; `grounding.site` names only the pages those
+chunks came from. Without embeddings (no key, a failed call) it falls back to whole pages ranked
+by the words they share with the message (`lib/knowledge/rank.ts`).
+
+## From the room to the site
+
+A fact the site does not say is a site that is behind. HTR does not touch the site; it writes to
+the agent that does. When a tenant names a web agent (`business.webAgent`, the address of the
+agent that edits the site, its own AgentMail inbox on your own server), every distilled fact
+becomes a proposal of a third kind, `site`: "Please add this to felaniam.cloud: Dogs are welcome
+at the office." It is numbered in the digest and ruled like any draft. Signed, it goes out as a
+new thread to the web agent with the owner copied and a signed header on it (`x-htr-site`, an
+HMAC of tenant and proposal under `HTR_SITE_SECRET`), so the agent acts only on what HTR sent.
+The agent replies in the thread when the page is live; mail from its address is never drafted,
+only matched to the request by thread. Then Firecrawl reads the site again, and when a page says
+what the fact says, the proposal is `live` and the fact points at the page. The assistant taught
+itself a fact, asked permission to publish it, and checked the web to see that it was.
+
+The web agent itself is a separate, small thing: [htr-web-agent](https://github.com/txmyer-dev/htr-web-agent),
+one Node file on the VPS with the page mounted, its own AgentMail inbox, and the same secret. It
+edits the page as `{find, replace}` pairs the model proposes, refuses any edit that is not
+unique or removes more than it adds, keeps a backup, and replies-all in the thread. If it
+cannot carry a request out, its reply says so and `npx convex run proposals:resend` asks again.
+
 ## Layout
 
 ```
 convex/convex.config.ts   components: static hosting (the surface, served from this deployment)
-convex/schema.ts          the spine: tenants, messages, proposals, rulings, digests, events, actions, contacts, knowledge
+convex/schema.ts          the spine: tenants, messages, proposals, rulings, digests, events, actions, contacts, knowledge, chunks (vector index), facts, demoInboxes
 convex/install.ts         the tenant block (client zero)
-convex/lib/               pure: rulings/parse, digest/render+expiry, reader/waiting+deadline+automated, mail/svix+inbound+agentmail, time
+convex/demo.ts            the front door: the inbox pool, the lease, the pretend customer, the sweep
+convex/lib/               pure: rulings/parse+token, digest/render+expiry, reader/waiting+deadline+automated, mail/svix+inbound+agentmail, knowledge/domain+rank+links+chunk, llm/openaiCompat+embed, site/publish, time
 convex/proposals.ts       the lifecycle as guarded transitions
 convex/rulings.ts         apply a ruling once: by reply, by link, from the surface; hold; expiry
+convex/facts.ts           the second brain: what the owner teaches, distilled once; and from the room to the site: the request, the acknowledgment, the re-read
 convex/digest.ts          number, debounce, build, send
 convex/drafter.ts         reader → OpenAI → proposal
 convex/mail.ts            AgentMail in (receive) and out (digest, confirmations, notices, dispatch); provisioning
-convex/knowledge.ts       Firecrawl: the business site
+convex/knowledge.ts       Firecrawl: the business site (crawled now, weekly) and the sender's site (first contact); the site in pieces, embedded, retrieved
 convex/http.ts            the routes above
-convex/crons.ts           expiry, digest clock
+convex/crons.ts           expiry, digest clock, demo sweep, weekly site re-read
 src/                      the live surface (Vite + React), uploaded to convex.site by `npm run deploy`
 tests/                    node for lib, convex-test for the loop
 STEALS.md                 the ledger

@@ -30,4 +30,25 @@ button:disabled { opacity: 0.5; cursor: default; }
 .ruled li { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
 .status { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-right: 0.4rem; }
 .status.sent { color: #2f7d4f; }
+.status.live { color: #1f6feb; }
 .status.failed, .error { color: #b3261e; }
+
+/* the front door */
+.front .lede { font-size: 1.1rem; margin: 0 0 1.5rem; }
+.how { padding-left: 1.2rem; margin: 0 0 2rem; }
+.how li { margin: 0.5rem 0; }
+code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; }
+.form { display: grid; gap: 0.9rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.2rem; margin: 0.9rem 0; }
+.form label { display: grid; gap: 0.3rem; font-weight: 600; }
+.form input, .form textarea { font: inherit; font-weight: 400; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.7rem; margin: 0; }
+.hint { font-weight: 400; font-size: 0.9rem; color: var(--muted); }
+.form .primary { justify-self: start; }
+
+/* the demo banner */
+.banner { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 0.9rem 0 1.4rem; }
+.banner p { margin: 0.3rem 0; }
+.banner .form { margin: 0.9rem 0 0.3rem; border-style: solid; }
+.addr { font-size: 1.05em; user-select: all; }
+button.small { font-size: 0.85rem; padding: 0.15rem 0.6rem; margin-left: 0.5rem; }
+.from { font-size: 0.9rem; color: var(--muted); margin: -0.4rem 0 0.9rem; }
+.gap { font-size: 0.9rem; color: #8a5a00; margin: -0.4rem 0 0.9rem; }

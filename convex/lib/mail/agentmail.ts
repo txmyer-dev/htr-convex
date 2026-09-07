@@ -23,9 +23,12 @@ export class AgentMail {
   }
 
   /** A new message out of an inbox. */
-  async send(inboxId: string, m: { to: string[]; subject: string; text: string; html?: string; cc?: string[] }): Promise<SendResult> {
+  async send(
+    inboxId: string,
+    m: { to: string[]; subject: string; text: string; html?: string; cc?: string[]; headers?: Record<string, string> },
+  ): Promise<SendResult> {
     const r = await this.call<{ message_id: string; thread_id: string }>("POST", `/inboxes/${enc(inboxId)}/messages/send`, {
-      to: m.to, cc: m.cc, subject: m.subject, text: m.text, html: m.html,
+      to: m.to, cc: m.cc, subject: m.subject, text: m.text, html: m.html, headers: m.headers,
     });
     return { messageId: r.message_id, threadId: r.thread_id };
   }
@@ -52,6 +55,14 @@ export class AgentMail {
       url: m.url, event_types: m.eventTypes, inbox_ids: m.inboxIds,
     });
     return { webhookId: r.webhook_id, secret: r.secret, url: r.url };
+  }
+
+  async deleteWebhook(webhookId: string): Promise<void> {
+    await this.call<unknown>("DELETE", `/webhooks/${enc(webhookId)}`);
+  }
+
+  async deleteInbox(inboxId: string): Promise<void> {
+    await this.call<unknown>("DELETE", `/inboxes/${enc(inboxId)}`);
   }
 }
 

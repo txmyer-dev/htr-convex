@@ -55,6 +55,12 @@ describe("commands", () => {
     expect(parseReply("?").commands).toEqual([{ command: "digest", arg: null }]);
   });
 
+  test("remember teaches a fact in the owner's words", () => {
+    expect(parseReply("remember we open at 9 on Saturdays").commands).toEqual([{ command: "remember", arg: "we open at 9 on Saturdays" }]);
+    expect(parseReply("Learn: parking is free after 6").commands).toEqual([{ command: "remember", arg: "parking is free after 6" }]);
+    expect(parseReply("remember").unparsed).toEqual(["remember"]); // nothing to remember
+  });
+
   test("unparsed is reported, not guessed", () => {
     const p = parseReply("what does this mean");
     expect(isEmpty(p)).toBe(true);

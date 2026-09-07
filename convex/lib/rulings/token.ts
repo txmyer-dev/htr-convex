@@ -45,3 +45,8 @@ export async function rulingLinks(
     `${base}/${encodeURIComponent(tenantId)}/${encodeURIComponent(proposalId)}/${v}?t=${await rulingToken(secret, tenantId, proposalId, v)}`;
   return { sign: await url("sign"), reject: await url("reject"), edit: await url("edit") };
 }
+
+/** The signature on a site request to the web agent: binds tenant and proposal, under its own secret. */
+export async function siteToken(secret: string, tenantId: string, proposalId: string): Promise<string> {
+  return (await hmacHex(secret, `${tenantId}:${proposalId}:site`)).slice(0, 32);
+}

@@ -11,6 +11,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, type MutationCtx } from "./_generated/server";
 import { appendEvent } from "./events";
 import { renderDigest, type DigestItem } from "./lib/digest/render";
+import { describeGrounding } from "./lib/knowledge/domain";
 import { rulingLinks } from "./lib/rulings/token";
 import { pendingFor } from "./proposals";
 import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
@@ -30,7 +31,7 @@ export async function requestDigest(ctx: MutationCtx, tenant: Doc<"tenants">) {
 export type BuiltDigest = {
   digestId: Id<"digests">;
   body: string;
-  items: Array<{ n: number; proposalId: Id<"proposals">; item: DigestItem }>;
+  items: Array<{ n: number; proposalId: Id<"proposals">; item: DigestItem; grounding?: Doc<"proposals">["grounding"] }>; // item.gap: what the room could not answer
 };
 
 export const build = internalMutation({
@@ -60,7 +61,8 @@ export const build = internalMutation({
       items: numbered.map(([n, p]) => ({
         n,
         proposalId: p._id,
-        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline },
+        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap },
+        grounding: p.grounding,
       })),
     };
   },
@@ -80,14 +82,17 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest): P
   const surface = await liveSurfaceUrl(tenant.slug);
   const linkLines: string[] = [];
   const cards: string[] = [];
-  for (const { n, proposalId, item } of built.items) {
+  for (const { n, proposalId, item, grounding } of built.items) {
     const links = await rulingLinks(base, secret, tenant.slug, proposalId);
     linkLines.push(`${n}  Send: ${links.sign}\n    Skip: ${links.reject}\n    Edit: ${links.edit}`);
     const ask = item.basis[0] ? `<p style="color:#5b6070;margin:0 0 8px">“${escapeHtml(item.basis[0])}”</p>` : "";
+    const from = describeGrounding(grounding);
     cards.push(
       `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0">` +
         `<div style="font-weight:600;margin-bottom:6px">${n} · ${escapeHtml(item.toName || item.toAddress)}</div>${ask}` +
         `<p style="white-space:pre-wrap;margin:0 0 12px">${escapeHtml(item.body)}</p>` +
+        (from ? `<p style="color:#5b6070;font-size:.9em;margin:0 0 12px">${escapeHtml(from)}</p>` : "") +
+        (item.gap ? `<p style="color:#8a5a00;font-size:.9em;margin:0 0 12px">You haven't told me: ${escapeHtml(item.gap)}. Reply <b>${n} your answer</b> and I'll send it and remember it.</p>` : "") +
         `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
         `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
         `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a>` +

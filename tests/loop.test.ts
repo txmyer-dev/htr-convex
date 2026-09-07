@@ -158,6 +158,46 @@ describe("the loop", () => {
     expect(again.lessons).toHaveLength(1);
   });
 
+  test("a gap the owner fills becomes a fact; the next draft sees it; remember teaches outside a draft", async () => {
+    const pid = await t.mutation(internal.drafter.record, {
+      messageId: msgId, body: "Tony will confirm Saturday's hours.", basis: ["Do you have a leather bag under $200?"], toName: "Marco", gap: "Saturday opening hours",
+    });
+    const built = (await t.mutation(internal.digest.build, { tenantId }))!;
+    expect(built.body).toContain("· you haven't told me: Saturday opening hours");
+    expect(built.items[0].item.gap).toBe("Saturday opening hours");
+
+    // a plain sign teaches nothing
+    const signed = await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1 no" });
+    expect(signed.confirmation).toBe("Skipped 1 (Marco).");
+    expect(await t.run((ctx) => ctx.db.query("facts").collect())).toHaveLength(0);
+
+    // the same question again, answered in the owner's words: sent, and remembered
+    await t.mutation(internal.mail.receive, { tenantId, mail: mail({ threadId: "thr_2", text: "Are you open Saturday?" }) });
+    const m2 = (await t.run((ctx) => ctx.db.query("messages").order("desc").first()))!;
+    const pid2 = await t.mutation(internal.drafter.record, { messageId: m2._id, body: "Tony will confirm.", basis: ["Are you open Saturday?"], toName: "Marco", gap: "Saturday opening hours" });
+    await t.mutation(internal.digest.build, { tenantId });
+    const out = await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1 Yes, Saturdays 9 to 2. Come by!" });
+    expect(out.confirmation).toBe("Sending 1 to Marco with your words. Remembered: Saturday opening hours.");
+    expect((await t.run((ctx) => ctx.db.get(pid2)))!).toMatchObject({ status: "signed", body: "Yes, Saturdays 9 to 2. Come by!" });
+    const facts = await t.run((ctx) => ctx.db.query("facts").collect());
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({ question: "Saturday opening hours", answer: "Yes, Saturdays 9 to 2. Come by!", proposalId: pid2 });
+    expect(pid).not.toBe(pid2);
+
+    // the next message, from anyone: the drafter has the fact in front of it
+    await t.mutation(internal.mail.receive, { tenantId, mail: mail({ fromAddress: "sam@example.com", fromName: "Sam", threadId: "thr_3", text: "Saturday hours?" }) });
+    const m3 = (await t.run((ctx) => ctx.db.query("messages").order("desc").first()))!;
+    const c = (await t.query(internal.drafter.context, { messageId: m3._id }))!;
+    expect(c.facts.map((f) => [f.question, f.answer])).toEqual([["Saturday opening hours", "Yes, Saturdays 9 to 2. Come by!"]]);
+
+    // a bare remember, and the same fact twice is one fact
+    expect((await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "remember parking is free after 6" })).confirmation).toBe("Remembered: parking is free after 6");
+    expect((await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "remember parking is free after 6" })).confirmation).toBe("I already knew that.");
+    expect(await t.run((ctx) => ctx.db.query("facts").collect())).toHaveLength(2);
+    const events = await t.run((ctx) => ctx.db.query("events").collect());
+    expect(events.filter((e) => e.kind === "fact.learned")).toHaveLength(2);
+  });
+
   test("skip, help, later, hold, and the digest command", async () => {
     const pid = await draft();
     await t.mutation(internal.digest.build, { tenantId });
@@ -226,7 +266,7 @@ describe("the loop", () => {
     const rows = await t.query(api.proposals.list, { slug: "tony", key });
     expect(rows.map((r) => r.id)).toEqual([pid]);
     const note = await t.mutation(api.rulings.ruleFromSurface, { slug: "tony", key, proposalId: pid, verdict: "edit", body: "Held for you till Friday." });
-    expect(note).toBe("Sending Reply to Marco: “Yes, the Harlow, $185. Want it held?” to Marco with your words.");
+    expect(note).toBe("Sending the draft to Marco with your words.");
     expect((await t.run((ctx) => ctx.db.get(pid)))!.body).toBe("Held for you till Friday.");
   });
 
@@ -242,4 +282,83 @@ describe("the loop", () => {
     const notices = await t.run((ctx) => ctx.db.query("actions").filter((q) => q.eq(q.field("kind"), "send_mail")).collect());
     expect(notices).toHaveLength(1);
   });
+});
+
+describe("from the room to the site", () => {
+  const WEB = "web-felaniam@agentmail.to";
+
+  test("a fact becomes a site request when the tenant has a web agent; the agent's reply is matched by thread; Firecrawl's re-read makes it live", async () => {
+    const { t, tenant: installed } = await setup();
+    const tenantId = installed._id;
+    // no web agent: a fact stays in the room
+    const { webAgent: _unused, ...business } = installed.business;
+    await t.run(async (ctx) => { await ctx.db.patch(tenantId, { business }); });
+    const tenant = (await t.run((ctx) => ctx.db.get(tenantId)))!;
+    await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "remember dogs are welcome at the office" });
+    const f1 = (await t.run((ctx) => ctx.db.query("facts").first()))!;
+    await t.mutation(internal.facts.setStatement, { factId: f1._id, statement: "Dogs are welcome at the office." });
+    expect(await t.mutation(internal.facts.proposeSite, { factId: f1._id })).toBeNull();
+
+    // with one: the request is a proposal, numbered like any draft, ruled like any draft
+    await t.run(async (ctx) => { await ctx.db.patch(tenantId, { business: { ...tenant.business, webAgent: WEB } }); });
+    const pid = (await t.mutation(internal.facts.proposeSite, { factId: f1._id }))!;
+    expect(await t.mutation(internal.facts.proposeSite, { factId: f1._id })).toBe(pid); // once per fact
+    const p = (await t.run((ctx) => ctx.db.get(pid)))!;
+    expect(p).toMatchObject({ kind: "site", toAddress: WEB, toName: "your website", status: "pending", sourceKind: "fact", sourceId: f1._id, basis: ["Dogs are welcome at the office."] });
+    expect(p.body).toContain("Please add this to felaniam.cloud");
+    expect(p.summary).toMatch(/^Website update: /);
+    expect(p.meta.subject).toBe("Update felaniam.cloud: Dogs are welcome at the office.");
+    const built = (await t.mutation(internal.digest.build, { tenantId }))!;
+    expect(built.body).toContain("1 your website (site):");
+    const out = await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1" });
+    expect(out.confirmation).toBe("Sending 1 to your website.");
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("signed");
+
+    // the dispatcher's two ends, without the network: claimed, then sent in a new thread
+    await t.mutation(internal.proposals.claimForSend, { proposalId: pid });
+    await t.mutation(internal.proposals.finishSend, { proposalId: pid, ref: "am_msg_1", threadId: "thr_site_1" });
+    expect((await t.run((ctx) => ctx.db.get(pid)))!).toMatchObject({ status: "sent", meta: { threadId: "thr_site_1" } });
+
+    // a reply from the web agent in another thread matches nothing; in the thread, it is acknowledged and never drafted
+    const stray = await t.mutation(internal.mail.receive, { tenantId, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_other", subject: "hi", text: "hello?" }) });
+    expect(stray).toBe("site");
+    const ack = await t.mutation(internal.mail.receive, { tenantId, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_site_1", subject: "Re: Update felaniam.cloud", text: "Live at https://felaniam.cloud/#visit" }) });
+    expect(ack).toBe("site");
+    const kinds = (await t.run((ctx) => ctx.db.query("events").collect())).map((e) => e.kind);
+    expect(kinds).toContain("site.unmatched");
+    expect(kinds).toContain("site.acknowledged");
+    expect(await t.run((ctx) => ctx.db.query("proposals").collect())).toHaveLength(1); // nothing drafted for the agent's mail
+    const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(scheduled.some((s) => String(s.name).includes("verifySite"))).toBe(true);
+
+    // the site does not say it yet: not live; then it does
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid })).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("sent");
+    await t.mutation(internal.knowledge.store, { tenantId, pages: [{ url: "https://felaniam.cloud/", markdown: "Visiting us: dogs are welcome at the office." }] });
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid })).toBe("https://felaniam.cloud/");
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("live");
+    expect((await t.run((ctx) => ctx.db.get(f1._id)))!.onSite).toMatchObject({ url: "https://felaniam.cloud/" });
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid })).toBeNull(); // once
+  });
+});
+
+test("a site request the agent could not carry out can be asked again; an email cannot", async () => {
+  const { t, tenant } = await setup();
+  await t.run(async (ctx) => { await ctx.db.patch(tenant._id, { business: { ...tenant.business, webAgent: "web@agentmail.to" } }); });
+  await t.mutation(internal.rulings.fromEmail, { tenantId: tenant._id, from: OWNER, text: "remember parking is free after 6" });
+  const f = (await t.run((ctx) => ctx.db.query("facts").first()))!;
+  const pid = (await t.mutation(internal.facts.proposeSite, { factId: f._id }))!;
+  expect(await t.mutation(internal.proposals.resend, { proposalId: pid })).toBe("not sent (pending)");
+  await t.mutation(internal.digest.build, { tenantId: tenant._id });
+  await t.mutation(internal.rulings.fromEmail, { tenantId: tenant._id, from: OWNER, text: "all" });
+  await t.mutation(internal.proposals.claimForSend, { proposalId: pid });
+  await t.mutation(internal.proposals.finishSend, { proposalId: pid, ref: "m1", threadId: "thr_1" });
+  expect(await t.mutation(internal.proposals.resend, { proposalId: pid })).toBe("resent");
+  const p = (await t.run((ctx) => ctx.db.get(pid)))!;
+  expect(p.status).toBe("signed");
+  expect(p.meta.threadId).toBeUndefined();
+  await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail() });
+  const m = (await t.run((ctx) => ctx.db.query("messages").order("desc").first()))!;
+  const email = await t.mutation(internal.drafter.record, { messageId: m._id, body: "Hi.", basis: [], toName: "Marco" });
+  expect(await t.mutation(internal.proposals.resend, { proposalId: email })).toBe("not a site request");
 });

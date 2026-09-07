@@ -18,9 +18,12 @@ export const all = internalQuery({
 });
 
 export const setChannels = internalMutation({
-  args: { tenantId: v.id("tenants"), inboxId: v.string(), inboxAddress: v.string() },
-  handler: async (ctx, { tenantId, inboxId, inboxAddress }) => {
-    await ctx.db.patch(tenantId, { channels: { inboxId, inboxAddress } });
+  args: {
+    tenantId: v.id("tenants"), inboxId: v.string(), inboxAddress: v.string(),
+    webhookId: v.optional(v.string()), webhookSecret: v.optional(v.string()),
+  },
+  handler: async (ctx, { tenantId, ...channels }) => {
+    await ctx.db.patch(tenantId, { channels });
   },
 });
 
@@ -32,6 +35,7 @@ export const surface = query({
     return {
       slug: t.slug, displayName: t.displayName, timeZone: t.timeZone, ownerName: t.owner.name,
       ownerEmail: t.owner.email, digestAt: t.owner.digestAt, hold: t.hold ?? null, inbox: t.channels.inboxAddress ?? null,
+      site: t.business.site ?? null, demo: t.demo ?? null,
     };
   },
 });

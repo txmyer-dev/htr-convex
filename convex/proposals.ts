@@ -3,6 +3,7 @@
 // WHERE-on-status that made a replayed ruling or a double dispatch harmless in the SQL version.
 
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { appendEvent } from "./events";
@@ -45,8 +46,10 @@ export type ProposeArgs = {
   sourceKind?: string;
   sourceId?: string;
   deadline?: number;
-  kind?: "email" | "sms";
+  kind?: "email" | "sms" | "site";
   meta?: Proposal["meta"];
+  grounding?: Proposal["grounding"];
+  gap?: string;
 };
 
 /** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId). */
@@ -62,12 +65,14 @@ export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposa
     toName: a.toName,
     body: a.body,
     basis: a.basis ?? [],
-    summary: summarize(a.toName, a.toAddress, a.body),
+    summary: summarize(a.toName, a.toAddress, a.body, a.kind ?? "email"),
     status: "pending",
     sourceKind: a.sourceKind,
     sourceId: a.sourceId,
     deadline: a.deadline,
     edited: false,
+    grounding: a.grounding,
+    gap: a.gap,
     meta: a.meta ?? {},
     createdAt: Date.now(),
   });
@@ -98,6 +103,8 @@ export const supersede = (ctx: MutationCtx, id: Id<"proposals">) => transition(c
 export const beginSend = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, id, "sending");
 export const markSent = (ctx: MutationCtx, id: Id<"proposals">, ref?: string) =>
   transition(ctx, id, "sent", { sentRef: ref, sentAt: Date.now(), error: undefined });
+/** A site request the web agent carried out and Firecrawl has seen on the page. */
+export const markLive = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, id, "live");
 export const markFailed = (ctx: MutationCtx, id: Id<"proposals">, error: string) => transition(ctx, id, "failed", { error });
 export const retry = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, id, "signed", { error: undefined });
 
@@ -105,7 +112,7 @@ export const retry = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, 
 export async function edit(ctx: MutationCtx, id: Id<"proposals">, body: string): Promise<Proposal | null> {
   const p = await ctx.db.get(id);
   if (!p || p.status !== "pending") return null;
-  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body) });
+  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body, p.kind) });
   return (await ctx.db.get(id))!;
 }
 
@@ -122,8 +129,8 @@ export const claimForSend = internalMutation({
 });
 
 export const finishSend = internalMutation({
-  args: { proposalId: v.id("proposals"), ref: v.optional(v.string()), error: v.optional(v.string()) },
-  handler: async (ctx, { proposalId, ref, error }) => {
+  args: { proposalId: v.id("proposals"), ref: v.optional(v.string()), threadId: v.optional(v.string()), error: v.optional(v.string()) },
+  handler: async (ctx, { proposalId, ref, threadId, error }) => {
     const p = await ctx.db.get(proposalId);
     if (!p) return;
     if (error !== undefined) {
@@ -132,16 +139,18 @@ export const finishSend = internalMutation({
       return;
     }
     await markSent(ctx, proposalId, ref);
+    // A new thread (a site request) is remembered so the web agent's reply in it finds its proposal.
+    if (threadId && !p.meta.threadId) await ctx.db.patch(proposalId, { meta: { ...p.meta, threadId } });
     await ctx.db.insert("messages", {
       tenantId: p.tenantId,
-      channel: p.kind,
+      channel: p.kind === "sms" ? "sms" : "email",
       direction: "out",
       fromAddress: "us",
       toAddress: p.toAddress,
       body: p.body,
       at: Date.now(),
       vendorRef: ref,
-      threadId: p.meta.threadId,
+      threadId: p.meta.threadId ?? threadId,
       meta: { subject: p.meta.subject },
     });
     await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
@@ -169,7 +178,25 @@ export const list = query({
       id: p._id, status: p.status, kind: p.kind, toAddress: p.toAddress, toName: p.toName, body: p.body,
       basis: p.basis, summary: p.summary, deadline: p.deadline, digestNo: p.digestNo, edited: p.edited,
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, subject: p.meta.subject,
-      sourceKind: p.sourceKind,
+      sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null,
     }));
+  },
+});
+
+/**
+ * `npx convex run proposals:resend '{"proposalId":"..."}'`: a site request the web agent could
+ * not carry out goes back to signed and is dispatched again. Site requests only: a sent email is
+ * sent, and asking twice would send it twice.
+ */
+export const resend = internalMutation({
+  args: { proposalId: v.id("proposals") },
+  handler: async (ctx, { proposalId }): Promise<string> => {
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.kind !== "site") return "not a site request";
+    if (p.status !== "sent") return `not sent (${p?.status})`;
+    if (!(await transition(ctx, proposalId, "signed", { sentRef: undefined, sentAt: undefined, meta: { ...p.meta, threadId: undefined } }))) return "no";
+    await appendEvent(ctx, p.tenantId, "site.resent", { proposalId });
+    await ctx.scheduler.runAfter(0, internal.mail.dispatch, { proposalId });
+    return "resent";
   },
 });

@@ -32,9 +32,14 @@ not, so what HTR had stolen from switchboard (config, jobs, web app, voice tools
 | `tests/loop.test.ts` | HTR `tests/test_loop.py` (the shape) | rewritten on convex-test |
 
 New here, no source: `convex/schema.ts`, `convex/install.ts`, `convex/surface.ts`,
-`convex/knowledge.ts`, `convex/lib/mail/{svix,inbound,agentmail}.ts`, `convex/lib/time.ts`,
-`convex/lib/drafter/lessons.ts` (the owner's edits as the drafter's lessons), `src/` (the live
-surface).
+`convex/knowledge.ts` (the business site and the sender's site, by Firecrawl),
+`convex/lib/knowledge/domain.ts` (whose domain is worth reading; what a draft rested on),
+`convex/lib/knowledge/rank.ts` (which pages of the site go in front of the drafter),
+`convex/lib/knowledge/links.ts` (which links in a message are worth reading),
+`convex/lib/knowledge/chunk.ts` (a page in pieces; the pieces the drafter reads), `convex/lib/llm/embed.ts` (embeddings over the same endpoint),
+`convex/demo.ts` (the front door: the inbox pool and its leases), `convex/facts.ts` (the second brain: what the owner teaches), `convex/lib/mail/{svix,inbound,agentmail}.ts`,
+`convex/lib/time.ts`, `convex/lib/drafter/lessons.ts` (the owner's edits as the drafter's lessons),
+`src/` (the front door and the live surface).
 
 Not carried over (yet): voice (Retell's six in-call tools, `post_call`), Twilio SMS, the
 Gmail adapter, `python -m htr.check`. When HTR steals this build back, `STEALS.md` there gets

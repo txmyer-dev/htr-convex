@@ -11,8 +11,9 @@
 import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { httpRouter } from "convex/server";
 import { components, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
+import { describeGrounding } from "./lib/knowledge/domain";
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
@@ -42,23 +43,17 @@ http.route({
 
 // ---- mail in ---------------------------------------------------------------------------------
 
+// Two shapes of URL. /webhooks/{slug}/mail is a client's own inbox: the secret is on the tenant
+// (or, for client zero, in the environment). /webhooks/pool/mail is every demo inbox: the event
+// names the inbox, the inbox knows its secret and who holds its lease. Either way the signature
+// is checked before anything is done with the message.
 http.route({
   pathPrefix: "/webhooks/",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
     const [slug, channel] = segments(req.url, "/webhooks/");
     if (channel !== "mail") return text("not found", 404);
-    const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
-    if (!tenant) return text("unknown tenant", 404);
     const body = await req.text();
-    const secret = process.env.AGENTMAIL_WEBHOOK_SECRET;
-    if (!secret) return text("webhook secret not configured", 500);
-    const ok = await svixVerify(secret, {
-      "svix-id": req.headers.get("svix-id") ?? undefined,
-      "svix-timestamp": req.headers.get("svix-timestamp") ?? undefined,
-      "svix-signature": req.headers.get("svix-signature") ?? undefined,
-    }, body);
-    if (!ok) return text("bad signature", 401);
     let payload: unknown;
     try {
       payload = JSON.parse(body);
@@ -66,8 +61,29 @@ http.route({
       return text("bad json", 400);
     }
     const { type, mail } = parseAgentMailEvent(payload);
+
+    let tenant: Doc<"tenants"> | null;
+    let secret: string | undefined;
+    if (slug === "pool") {
+      const row = mail?.inboxId ? await ctx.runQuery(internal.demo.inboxByAddress, { inboxId: mail.inboxId }) : null;
+      if (!row) return text("unknown inbox", 404);
+      secret = row.webhookSecret;
+      tenant = row.tenantId ? await ctx.runQuery(internal.tenants.get, { tenantId: row.tenantId }) : null;
+    } else {
+      tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
+      if (!tenant) return text("unknown tenant", 404);
+      secret = tenant.channels.webhookSecret ?? process.env.AGENTMAIL_WEBHOOK_SECRET;
+    }
+    if (!secret) return text("webhook secret not configured", 500);
+    const ok = await svixVerify(secret, {
+      "svix-id": req.headers.get("svix-id") ?? undefined,
+      "svix-timestamp": req.headers.get("svix-timestamp") ?? undefined,
+      "svix-signature": req.headers.get("svix-signature") ?? undefined,
+    }, body);
+    if (!ok) return text("bad signature", 401);
     if (type !== "message.received" || !mail) return json({ ok: true, ignored: type || "no message" });
-    if (tenant.channels.inboxId && mail.inboxId && mail.inboxId !== tenant.channels.inboxId) return json({ ok: true, ignored: "other inbox" });
+    if (!tenant || !tenant.channels.inboxId) return json({ ok: true, ignored: "no lease" });
+    if (mail.inboxId && mail.inboxId !== tenant.channels.inboxId) return json({ ok: true, ignored: "other inbox" });
     const outcome = await ctx.runMutation(internal.mail.receive, { tenantId: tenant._id, mail });
     return json({ ok: true, outcome });
   }),
@@ -141,6 +157,8 @@ http.route({
           (p.subject ? `<div style="color:#5b6070">${escapeHtml(p.subject)}</div>` : "") +
           (p.basis[0] ? `<p style="color:#5b6070;margin:8px 0">“${escapeHtml(p.basis[0])}”</p>` : "") +
           `<p style="white-space:pre-wrap">${escapeHtml(p.body)}</p>` +
+          (describeGrounding(p.grounding) ? `<p style="color:#5b6070;font-size:.9em">${escapeHtml(describeGrounding(p.grounding)!)}</p>` : "") +
+          (p.gap ? `<p style="color:#8a5a00;font-size:.9em">You haven't told me: ${escapeHtml(p.gap)}. Edit with your answer and I'll remember it.</p>` : "") +
           `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
           `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
           `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a></div>`,

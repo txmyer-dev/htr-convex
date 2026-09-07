@@ -17,14 +17,19 @@ export type InboundMail = {
   headers?: Record<string, string>;
 };
 
-const ADDR = /^\s*(?:"?([^"<]*?)"?\s*)?<?([^<>\s@]+@[^<>\s@]+)>?\s*$/;
+const NAMED = /^"?([^"<]*?)"?\s*<([^<>\s@]+@[^<>\s@]+)>$/;
 
-/** "Sam Lee <sam@x.com>" -> { name: "Sam Lee", address: "sam@x.com" } */
+/** "Sam Lee <sam@x.com>" -> { name: "Sam Lee", address: "sam@x.com" }; a bare address is itself. */
 export function parseAddress(s: string): { name?: string; address: string } {
-  const m = ADDR.exec(s ?? "");
-  if (!m) return { address: (s ?? "").trim().toLowerCase() };
-  const name = m[1]?.trim();
-  return { name: name || undefined, address: m[2].toLowerCase() };
+  const raw = (s ?? "").trim();
+  const m = NAMED.exec(raw);
+  if (m) return { name: m[1].trim() || undefined, address: m[2].toLowerCase() };
+  return { address: raw.replace(/^<|>$/g, "").toLowerCase() };
+}
+
+/** The signature AgentMail appends to what its free inboxes send; not the customer's words. */
+export function stripFooter(text: string): string {
+  return text.replace(/\s*\n--\s*\nSent via AgentMail\s*$/i, "").trim();
 }
 
 export function parseAgentMailEvent(payload: any): { type: string; mail: InboundMail | null } {

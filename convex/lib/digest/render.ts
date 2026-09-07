@@ -26,7 +26,10 @@ export type DigestItem = {
   kind: string; // email | sms
   sourceKind?: string | null; // call_message | email | sms | relist
   deadline?: number | null; // ms UTC
+  gap?: string | null; // what they asked that the room could not answer
 };
+
+export const GAP_LINE = "Where it says \"you haven't told me\", reply with the number and the answer; it goes out as your words and I remember it.";
 
 export function oneLine(s: string, n: number): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -39,6 +42,7 @@ export function who(p: DigestItem): string {
 
 export function channelOf(p: DigestItem): string {
   if ((p.sourceKind ?? "").startsWith("call")) return "call";
+  if (p.kind === "site") return "site";
   return p.kind === "email" ? "email" : "sms";
 }
 
@@ -54,7 +58,8 @@ export function when(p: DigestItem, timeZone: string, nowMs: number): string {
 export function renderLine(n: number, p: DigestItem, timeZone: string, nowMs: number): string {
   const ask = p.basis.length ? oneLine(p.basis[0], 80) : "";
   const askPart = ask ? ` "${ask}"` : "";
-  return `${n} ${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${oneLine(p.body, 160)}`;
+  const gap = p.gap ? ` · you haven't told me: ${oneLine(p.gap, 60)}` : "";
+  return `${n} ${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${oneLine(p.body, 160)}${gap}`;
 }
 
 /** items: (digest number, proposal), already numbered by the caller. */
@@ -67,7 +72,8 @@ export function renderDigest(
   if (items.length === 0) return "Nothing waiting on you.";
   const head = items.length > 1 ? `${items.length} waiting on you.` : "1 waiting on you.";
   const lines = [head, ""];
-  let budget = MAX_CHARS - head.length - HELP_LINE.length - 4;
+  const gapLine = items.some(([, p]) => p.gap) ? GAP_LINE : "";
+  let budget = MAX_CHARS - head.length - HELP_LINE.length - gapLine.length - 4;
   let shown = 0;
   for (const [n, p] of items) {
     const line = renderLine(n, p, timeZone, nowMs);
@@ -78,6 +84,7 @@ export function renderDigest(
   }
   if (shown < items.length) lines.push(`…and ${items.length - shown} more; reply ? after ruling to see them.`);
   lines.push("", HELP_LINE);
+  if (gapLine) lines.push(gapLine);
   return lines.join("\n");
 }
 

@@ -66,6 +66,14 @@ describe("toDraft", () => {
     expect(d.basis).toEqual([req.theirMessage]);
   });
 
+  test("a gap rides along when the model names one; null, none, and blanks do not", () => {
+    expect(toDraft('{"body":"Tony will confirm.","basis":[],"gap":"  Saturday opening   hours "}', req).gap).toBe("Saturday opening hours");
+    expect(toDraft('{"body":"Sure.","basis":[],"gap":null}', req).gap).toBeUndefined();
+    expect(toDraft('{"body":"Sure.","basis":[],"gap":"none"}', req).gap).toBeUndefined();
+    expect(toDraft('{"body":"Sure.","basis":[]}', req)).not.toHaveProperty("gap");
+    expect(toDraft(`{"body":"Sure.","basis":[],"gap":"${"x".repeat(300)}"}`, req).gap).toHaveLength(120);
+  });
+
   test("an empty draft is an error", () => {
     expect(() => toDraft('{"body":""}', req)).toThrow(/empty draft/);
     expect(extractJson("nope")).toBeNull();
@@ -79,6 +87,11 @@ describe("userPayload", () => {
   };
   test("no corrections yet: the key is null, not missing, so the model sees the shape", () => {
     expect(JSON.parse(userPayload(req)).owner_corrections).toBeNull();
+  });
+  test("what the owner told the room rides along as owner_facts, with the question when there was one", () => {
+    expect(JSON.parse(userPayload(req)).owner_facts).toBeNull();
+    const p = JSON.parse(userPayload({ ...req, facts: [{ question: "Saturday opening hours", answer: "9 to 2" }, { answer: "parking is free after 6" }] }));
+    expect(p.owner_facts).toEqual([{ asked: "Saturday opening hours", owner_said: "9 to 2" }, { owner_said: "parking is free after 6" }]);
   });
   test("the owner's corrections ride along as draft -> sent pairs", () => {
     const p = JSON.parse(userPayload({ ...req, lessons: [{ theirMessage: "under $200?", draft: "Yes, the Harlow, $185.", sent: "Yep, $185, come by." }] }));

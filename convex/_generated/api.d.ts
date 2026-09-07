@@ -9,15 +9,22 @@
  */
 
 import type * as crons from "../crons.js";
+import type * as demo from "../demo.js";
 import type * as digest from "../digest.js";
 import type * as drafter from "../drafter.js";
 import type * as events from "../events.js";
+import type * as facts from "../facts.js";
 import type * as http from "../http.js";
 import type * as install from "../install.js";
 import type * as knowledge from "../knowledge.js";
 import type * as lib_digest_expiry from "../lib/digest/expiry.js";
 import type * as lib_digest_render from "../lib/digest/render.js";
 import type * as lib_drafter_lessons from "../lib/drafter/lessons.js";
+import type * as lib_knowledge_chunk from "../lib/knowledge/chunk.js";
+import type * as lib_knowledge_domain from "../lib/knowledge/domain.js";
+import type * as lib_knowledge_links from "../lib/knowledge/links.js";
+import type * as lib_knowledge_rank from "../lib/knowledge/rank.js";
+import type * as lib_llm_embed from "../lib/llm/embed.js";
 import type * as lib_llm_openaiCompat from "../lib/llm/openaiCompat.js";
 import type * as lib_mail_agentmail from "../lib/mail/agentmail.js";
 import type * as lib_mail_inbound from "../lib/mail/inbound.js";
@@ -28,6 +35,7 @@ import type * as lib_reader_deadline from "../lib/reader/deadline.js";
 import type * as lib_reader_waiting from "../lib/reader/waiting.js";
 import type * as lib_rulings_parse from "../lib/rulings/parse.js";
 import type * as lib_rulings_token from "../lib/rulings/token.js";
+import type * as lib_site_publish from "../lib/site/publish.js";
 import type * as lib_time from "../lib/time.js";
 import type * as mail from "../mail.js";
 import type * as proposals from "../proposals.js";
@@ -44,15 +52,22 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
+  demo: typeof demo;
   digest: typeof digest;
   drafter: typeof drafter;
   events: typeof events;
+  facts: typeof facts;
   http: typeof http;
   install: typeof install;
   knowledge: typeof knowledge;
   "lib/digest/expiry": typeof lib_digest_expiry;
   "lib/digest/render": typeof lib_digest_render;
   "lib/drafter/lessons": typeof lib_drafter_lessons;
+  "lib/knowledge/chunk": typeof lib_knowledge_chunk;
+  "lib/knowledge/domain": typeof lib_knowledge_domain;
+  "lib/knowledge/links": typeof lib_knowledge_links;
+  "lib/knowledge/rank": typeof lib_knowledge_rank;
+  "lib/llm/embed": typeof lib_llm_embed;
   "lib/llm/openaiCompat": typeof lib_llm_openaiCompat;
   "lib/mail/agentmail": typeof lib_mail_agentmail;
   "lib/mail/inbound": typeof lib_mail_inbound;
@@ -63,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reader/waiting": typeof lib_reader_waiting;
   "lib/rulings/parse": typeof lib_rulings_parse;
   "lib/rulings/token": typeof lib_rulings_token;
+  "lib/site/publish": typeof lib_site_publish;
   "lib/time": typeof lib_time;
   mail: typeof mail;
   proposals: typeof proposals;

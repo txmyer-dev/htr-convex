@@ -9,10 +9,10 @@
 - **Convex deployment:** https://famous-spider-906.convex.cloud
 - **Components:** @convex-dev/static-hosting
 - **Convex features:** schema, tables, indexes, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries
-- **Auth:** none
+- **Auth:** none (no accounts by design: the owner's email address is the identity for rulings by reply; Send / Skip links and the surface URL are HMAC-signed per tenant)
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-05T02:50:00Z
+- **Last updated:** 2026-09-06T07:20:00Z
 
 ## Log
 
@@ -104,3 +104,153 @@ long-term caching, SPA paths fall back to index, the webhook still answers 401 u
 ruling and tenant routes still gate on their tokens, and the bundle points at this deployment's
 backend (`convex/convex.config.ts`, `convex/http.ts`, `convex/surface.ts`, `convex/digest.ts`,
 `convex/tenants.ts`, `package.json`).
+
+### 2026-09-06 - the front door, and Firecrawl in three places
+The live URL used to be a dead end without the owner's link. Now `/` is a front door: a name, an
+email, a business, and (optionally) its website give anyone an inbox address and the live page
+for two hours, as the owner. AgentMail inboxes are scarce (three on the free plan), so a demo
+leases one from a small pool instead of making its own; each pool inbox has one webhook at
+`/webhooks/pool/mail` whose secret lives with the inbox, and the route resolves the inbox in the
+event to the tenant holding its lease. A "Send a customer email" button on the page writes to
+the demo inbox from client zero's inbox, the customer's name in a header; AgentMail files an
+inbox's mail to itself under "sent" and never delivers it, which the first attempt found. The
+signed reply lands back in client zero's room and is never drafted there. An hourly sweep
+releases expired leases and forgets ended demos a day later; "End demo" frees the inbox now.
+
+Firecrawl now feeds the drafter three ways: the business site at install and on a Monday cron,
+and the sender's own domain on first contact from a company address (never webmail). What the
+drafter had in front of it is kept on the proposal as `grounding`, and the card, the digest, and
+the server-rendered page say "Drafted from your site (firecrawl.dev) and who they are (acme.com)."
+
+Two defects found by the live run and fixed: AgentMail stamps List-Unsubscribe on everything it
+sends, so the automated-mail nets rejected the pretend customer (a message our own header vouches
+for now skips them, and AgentMail's footer is stripped); and the address parser dropped the first
+character of a bare address (`oom-1@...`). Verified live on the deployment: a demo started from
+the form, a customer email became a draft on the page in five seconds, a draft for a Firecrawl
+demo quoted the Scale plan's price from the scraped pricing page with `grounding.site` recorded,
+a signed draft dispatched in-thread, and its echo in client zero's room was logged and not
+drafted. 85 tests (`convex/demo.ts`, `convex/knowledge.ts`, `convex/drafter.ts`, `convex/mail.ts`,
+`convex/http.ts`, `convex/crons.ts`, `convex/schema.ts`, `convex/lib/knowledge/domain.ts`,
+`convex/lib/mail/inbound.ts`, `src/App.tsx`, `tests/demo.test.ts`, `tests/domain.test.ts`,
+`tests/grounding.test.ts`, `tests/inbound.test.ts`).
+
+### 2026-09-06 - a shorter lease
+A demo now lasts thirty minutes, not two: a judge's try takes ten, the pool holds two inboxes on
+the free plan, and "End demo" still frees one sooner. The sweep that releases expired leases runs
+every fifteen minutes instead of hourly (`convex/demo.ts`, `convex/crons.ts`, `src/App.tsx`, `README.md`).
+
+### 2026-09-06 - the second brain: gap and teach
+A site does not say everything, and the drafter was told never to guess, so a question the site
+could not answer got "Tony will confirm" and nothing else ever happened. Now the drafter names
+what it could not answer as the proposal's `gap` ("dog access and nearby parking"), the digest
+line and the card say "you haven't told me: ...", and the owner answers the way they already
+rule: reply with the number and the words. The words go out as the reply, and they are kept in a
+new `facts` table as the answer to that question, in the owner's own voice. Every later draft
+for the tenant has the facts in front of it (`owner_facts`), the card says "Drafted from your
+site and one thing you told me", and a bare `remember ...` reply teaches without being asked.
+Verified live on a demo room against felaniam.cloud: the booking question was answered from the
+site, the dog-and-parking question was named as the gap, an edit ruling stored the fact, and the
+next customer's parking question was drafted from it with `grounding.facts` recorded. One defect
+found and fixed on the way: the first draft from a fact copied the owner's earlier reply whole,
+greeting and calendar link included, and a prompt line did not stop it; so each fact is now
+distilled once, by a scheduled action, into a plain statement about the business, and that is
+what the drafter reads (the owner's words stay as the record). A second: every pretend customer
+writes from one inbox, so the contact's first name stuck to every later customer; the name on
+the message now wins. 92 tests (`convex/facts.ts`, `tests/facts.test.ts`, `convex/schema.ts`, `convex/drafter.ts`, `convex/rulings.ts`,
+`convex/digest.ts`, `convex/proposals.ts`, `convex/views.ts`, `convex/http.ts`,
+`convex/lib/rulings/parse.ts`, `convex/lib/digest/render.ts`, `convex/lib/knowledge/domain.ts`,
+`src/App.tsx`, `tests/loop.test.ts`, `tests/drafter.test.ts`, `tests/digest.test.ts`, `tests/parse.test.ts`).
+
+### 2026-09-06 - the whole site, not the homepage
+The business site was one scrape: the homepage, and nothing behind it. Now `knowledge:refresh`
+and the Monday cron use Firecrawl's crawl: start the job, poll until it completes, follow `next`,
+keep every live page as markdown (dead and empty pages dropped, the homepage first), up to
+`HTR_CRAWL_PAGES` (default 20, a credit each). A full read replaces what the site used to say,
+so a page the site removed is forgotten; extra URLs passed to refresh are additions. If the crawl
+fails the one page is scraped as before. Discovery skips the sitemap and follows the homepage's
+links two hops out: the first live crawl of a large site spent the twenty pages on whatever the
+sitemap listed first (blog posts, glossary entries, a sign-in page, a tracked link with a query
+string) and never reached pricing; the second, from the nav, got pricing, use cases, and compare
+in the first ten. Sign-in, cart, account, search, and tag paths are excluded, and any URL with a
+query string is dropped. The drafter's site budget went from one page to a slice of each of several, with the URL on
+each heading so a draft can point at the page. And which pages: the first live draft against the
+crawled site still could not find pricing, because the budget filled with the first four pages by
+URL. `lib/knowledge/rank.ts` now orders the pages by the words they share with the message (a hit
+in the title or URL counts triple), homepage first, and `grounding.site` names only the pages
+that made it into the prompt, not everything stored. 96 tests (`convex/knowledge.ts`, `convex/drafter.ts`, `tests/knowledge.test.ts`,
+`tests/grounding.test.ts`, `.env.example`, `README.md`).
+
+### 2026-09-06 - from the room to the site
+A fact the site does not say is a site that is behind, and HTR does not touch the site. So a
+distilled fact, for a tenant that names a web agent (`business.webAgent`: the address of the
+agent that edits the site), becomes a proposal of a third kind, `site`: the request HTR would
+send that agent, numbered in the digest and ruled like any draft. Signed, it goes out in a new
+thread to the agent with the owner copied and an `x-htr-site` header carrying an HMAC of tenant
+and proposal under `HTR_SITE_SECRET` (its own secret, so the VPS never holds the ruling one).
+`mail.receive` got a third branch beside the owner and a person: mail from the web agent's
+address is an acknowledgment, matched to the request by thread id (the send now returns the
+thread and the proposal remembers it), never drafted; unmatched replies are logged. The
+acknowledgment schedules a re-read of the site, and when a page carries most of the fact's
+words the proposal moves `sent -> live` (a new status; a sent email still ends at sent) and the
+fact records the page. A miss is retried twice, five minutes apart, for a slow deploy. The web
+agent itself is the next piece; client zero's `webAgent` stays unset until its inbox exists.
+`convex/facts.ts`, `convex/lib/site/publish.ts`, `convex/lib/proposals/lifecycle.ts`,
+`convex/lib/rulings/token.ts`, `convex/mail.ts`, `convex/proposals.ts`, `convex/schema.ts`,
+`convex/surface.ts`, `convex/install.ts`, `convex/lib/digest/render.ts`, `src/App.tsx`,
+`tests/loop.test.ts`, `tests/publish.test.ts`, `tests/lifecycle.test.ts`. 105 tests.
+
+### 2026-09-06 - the web agent
+The other end of a site request: an agent with its own email address, on the VPS next to the
+site's nginx container, with the page mounted read-write (`~/dev/htr-web-agent`, Node 24, no
+dependencies, one file). AgentMail delivers to `web-felaniam@agentmail.to`; the webhook is
+Svix-verified, then the `x-htr-site` header is checked against `HTR_SITE_SECRET`, and anything
+not signed by HTR is logged and never answered. For a signed request the agent hands the page
+and the fact to the model and gets back `{edits: [{find, replace}], note}`; every find must
+occur exactly once, an edit may not remove more than it adds, the changed page must carry most
+of the fact's words, and only then is the old page backed up and the new one written (nginx
+serves it at once). It replies-all in the thread, so the owner copied on the request sees "Live.
+I added the parking and dog-friendly details to the Practical section." Verified live, end to
+end, on client zero: `remember Dogs are welcome at the office, and there is a parking garage on
+4th Street a block away` distilled to a statement, became a site proposal, was signed from the
+surface, went out signed, the agent put the sentence under Practical on felaniam.cloud, replied,
+HTR matched the reply by thread, Firecrawl read the site again, and the proposal moved to
+`live` with the fact pointing at the page. The first attempt failed on the model call (the
+gateway URL in the environment has no scheme; HTR normalizes it and the agent did not), and
+that failure exercised the rest: the agent's "couldn't place this" reply was acknowledged, the
+re-read found nothing, the retry was scheduled, and a new `proposals:resend` put the request
+back to signed and out again. The pool paid for the inbox: AgentMail's free plan has three,
+client zero holds one, so the second demo inbox was retired (`demo:retire`) and
+`HTR_DEMO_POOL` is 1 until AgentMail answers about the developer plan. The site repo's deploy
+now refuses to push over a page the agent has changed (`deploy/pull.sh` brings it back first).
+106 tests (`convex/proposals.ts`, `convex/demo.ts`, `convex/install.ts`,
+`convex/lib/proposals/lifecycle.ts`, `tests/loop.test.ts`, `tests/lifecycle.test.ts`;
+`~/dev/htr-web-agent/{server.mjs,test.mjs,Dockerfile,deploy/}`; `~/dev/felaniam-site/deploy/`).
+
+### 2026-09-06 - the pages they send
+"Can you quote this?" with a link is a question about what is behind the link. The drafter now
+reads the pages a message links to, with Firecrawl, at draft time: at most two, a slice of each,
+never an image, an unsubscribe or tracking link, or one of our own ruling links
+(`lib/knowledge/links.ts`). They go in the prompt as `their_links`, the model is told to answer
+about what is on them, and `grounding.links` names them, so the card says "Drafted from your
+site (felaniam.cloud) and the page they sent (firecrawl.dev)." A page that will not read is
+noted and skipped; the draft still goes out on the rest. Firecrawl is now in four places: the
+business site, the sender's site, the pages they send, and the re-read that confirms a site
+request went live. 109 tests (`convex/drafter.ts`, `convex/schema.ts`,
+`convex/lib/knowledge/domain.ts`, `convex/lib/knowledge/links.ts`, `tests/links.test.ts`,
+`tests/grounding.test.ts`).
+
+### 2026-09-06 - the site in pieces
+Ranking whole pages by shared words found pricing when the customer said "cost"; it would not
+find "how late are you open" on a page that says "hours". So the site is now retrieved, not
+ranked: when a site is read, each page is cut into chunks under their headings
+(`lib/knowledge/chunk.ts`), the chunks are embedded in one call (`lib/llm/embed.ts`,
+`text-embedding-3-small`, 1536 dimensions) by a scheduled action, and they replace the tenant's
+old chunks in one transaction. The new `chunks` table carries a Convex vector index filtered by
+tenant. At draft time the drafter embeds the message, asks the index for the eight closest
+chunks, puts the homepage's opening in front of them so the model knows what the business is
+before what it says about this, and drafts from that; `grounding.site` names only the pages the
+chunks came from, and a `retrieve.hit` event records how many and how close. No key or a failed
+call falls back to the ranked pages. Demo purge now takes the chunks with it. 114 tests
+(`convex/schema.ts`, `convex/knowledge.ts`, `convex/drafter.ts`, `convex/demo.ts`,
+`convex/lib/knowledge/chunk.ts`, `convex/lib/llm/embed.ts`, `tests/chunk.test.ts`,
+`tests/grounding.test.ts`, `.env.example`).

@@ -45,3 +45,8 @@ export function siteUrl(): string {
 export async function liveSurfaceUrl(slug: string): Promise<string> {
   return `${siteUrl()}/?t=${encodeURIComponent(slug)}&k=${await surfaceKey(slug)}`;
 }
+
+/** The secret behind site requests to the web agent: its own, so the VPS never holds the ruling secret; falls back to it. */
+export function siteSecret(): string {
+  return process.env.HTR_SITE_SECRET || rulingSecret();
+}

@@ -1,6 +1,6 @@
 // STEALS: HTR tests/test_digest.py.
 import { describe, expect, test } from "vitest";
-import { HELP_LINE, MAX_CHARS, renderDigest, segments, type DigestItem } from "../convex/lib/digest/render";
+import { GAP_LINE, HELP_LINE, MAX_CHARS, renderDigest, segments, type DigestItem } from "../convex/lib/digest/render";
 import { holdNotice, isOverdue } from "../convex/lib/digest/expiry";
 
 const item = (over: Partial<DigestItem> = {}): DigestItem => ({
@@ -28,6 +28,16 @@ describe("renderDigest", () => {
     expect(lines[2]).toContain("→ Yes, the Harlow");
     expect(lines[3].startsWith('2 sam@example.com (email): "Are you open Saturday?" →')).toBe(true);
     expect(lines.at(-1)).toBe(HELP_LINE);
+  });
+
+  test("a gap is named on the line and explained once at the foot", () => {
+    const text = renderDigest([[1, item({ gap: "Saturday opening hours" })], [2, item()]]);
+    const lines = text.split("\n");
+    expect(lines[2]).toContain("→ Hi there, thanks for your message. Tony will get back to you shortly. · you haven't told me: Saturday opening hours");
+    expect(lines[3]).not.toContain("you haven't told me");
+    expect(lines.at(-2)).toBe(HELP_LINE);
+    expect(lines.at(-1)).toBe(GAP_LINE);
+    expect(renderDigest([[1, item()]])).not.toContain(GAP_LINE);
   });
 
   test("a deadline today says today; far away says the date", () => {

@@ -32,14 +32,29 @@ export const tenantFields = {
     site: v.optional(v.string()), // Firecrawl reads it; drafts rest on what it says
     bookingLink: v.optional(v.string()),
     agentName: v.string(), // who signs the hold notice's disclosure
+    webAgent: v.optional(v.string()), // the address of the agent that edits the site; site proposals go to it
   }),
   channels: v.object({
     inboxId: v.optional(v.string()), // the AgentMail inbox: counterparties write to it, digests go out of it
     inboxAddress: v.optional(v.string()),
+    webhookId: v.optional(v.string()),
+    webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
   }),
   hold: v.optional(v.union(v.null(), v.object({ since: v.number(), until: v.optional(v.string()) }))),
   digestScheduled: v.optional(v.id("_scheduled_functions")), // immediate mode: the debounced digest
+  // A try-it tenant: made from the front door, on a leased inbox, gone after the lease.
+  demo: v.optional(v.object({ startedAt: v.number(), expiresAt: v.number(), endedAt: v.optional(v.number()) })),
 };
+
+/** What a draft rested on besides the message itself: the pages Firecrawl read. */
+export const grounding = v.object({
+  site: v.optional(v.array(v.object({ url: v.string(), title: v.optional(v.string()), fetchedAt: v.number() }))),
+  sender: v.optional(v.object({ url: v.string(), title: v.optional(v.string()), fetchedAt: v.number() })),
+  // What the owner has told the room (the facts table), when any of it was in the prompt.
+  facts: v.optional(v.array(v.object({ question: v.optional(v.string()), at: v.number() }))),
+  // The pages they linked in their message, read at draft time.
+  links: v.optional(v.array(v.object({ url: v.string(), title: v.optional(v.string()), fetchedAt: v.number() }))),
+});
 
 export default defineSchema({
   tenants: defineTable(tenantFields).index("by_slug", ["slug"]),
@@ -69,7 +84,7 @@ export default defineSchema({
 
   proposals: defineTable({
     tenantId: v.id("tenants"),
-    kind: v.union(v.literal("email"), v.literal("sms")),
+    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site")), // site: a request to the web agent, see facts.ts
     toAddress: v.string(),
     toName: v.optional(v.string()),
     body: v.string(),
@@ -84,6 +99,8 @@ export default defineSchema({
     edited: v.boolean(),
     sentRef: v.optional(v.string()),
     error: v.optional(v.string()),
+    grounding: v.optional(grounding), // what the drafter had in front of it, so the owner can see why
+    gap: v.optional(v.string()), // what they asked that nothing the room knows answers; the owner's edit becomes the fact
     meta: v.object({
       subject: v.optional(v.string()),
       threadId: v.optional(v.string()),
@@ -139,6 +156,9 @@ export default defineSchema({
     name: v.optional(v.string()),
     lastSeenAt: v.number(),
     count: v.number(),
+    // Who is writing: Firecrawl reads the sender's domain on first contact (never a webmail domain).
+    profile: v.optional(v.object({ url: v.string(), title: v.optional(v.string()), markdown: v.string(), fetchedAt: v.number() })),
+    profiledAt: v.optional(v.number()), // when we last tried, so a dead domain is not read on every message
   }).index("by_tenant_address", ["tenantId", "address"]),
 
   knowledge: defineTable({
@@ -148,4 +168,45 @@ export default defineSchema({
     markdown: v.string(),
     fetchedAt: v.number(),
   }).index("by_tenant_url", ["tenantId", "url"]),
+
+  // What the owner taught the room. A draft that could not answer a question is marked with the
+  // gap; the owner's reply to it is the answer, kept here in the owner's own words and put in
+  // front of the drafter from then on. The site is the first brain; this is the second.
+  facts: defineTable({
+    tenantId: v.id("tenants"),
+    question: v.optional(v.string()), // the gap the draft named; absent for a bare "remember ..."
+    answer: v.string(), // the owner's words
+    proposalId: v.optional(v.id("proposals")), // the draft whose ruling taught it
+    statement: v.optional(v.string()), // the same, distilled to plain facts about the business; what the drafter reads
+    distilledAt: v.optional(v.number()),
+    siteProposalId: v.optional(v.id("proposals")), // the request to put it on the site, when the tenant has a web agent
+    onSite: v.optional(v.object({ url: v.string(), at: v.number() })), // the page Firecrawl found it on, once it was
+    at: v.number(),
+  }).index("by_tenant_at", ["tenantId", "at"]),
+
+  // The business site in pieces, each with its embedding, so the drafter can pull the few that
+  // speak to the message instead of the first pages by URL. Rebuilt whenever the site is re-read.
+  chunks: defineTable({
+    tenantId: v.id("tenants"),
+    url: v.string(),
+    title: v.optional(v.string()),
+    text: v.string(),
+    embedding: v.array(v.float64()),
+    fetchedAt: v.number(),
+  })
+    .index("by_tenant", ["tenantId"])
+    .vectorIndex("by_embedding", { vectorField: "embedding", dimensions: 1536, filterFields: ["tenantId"] }),
+
+  // The front door's inboxes. AgentMail inboxes are few (three on the free plan), so demos lease
+  // one from this pool rather than making their own; the webhook and its secret live with the inbox.
+  demoInboxes: defineTable({
+    inboxId: v.string(),
+    address: v.string(),
+    webhookId: v.string(),
+    webhookSecret: v.string(),
+    tenantId: v.optional(v.id("tenants")), // who holds the lease
+    leasedUntil: v.optional(v.number()),
+  })
+    .index("by_inbox", ["inboxId"])
+    .index("by_tenant", ["tenantId"]),
 });

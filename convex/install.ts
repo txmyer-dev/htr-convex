@@ -28,6 +28,9 @@ export const TENANTS: Install[] = [
       site: "https://felaniam.cloud",
       bookingLink: "https://calendar.app.google/PzY2EQVcyDDQ2GY9A",
       agentName: "Ekko",
+      // The agent that edits felaniam.cloud (its own AgentMail inbox, on the VPS). With it set, a
+      // fact the site does not say becomes a site proposal; without it, facts stay in the room.
+      webAgent: "web-felaniam@agentmail.to",
     },
     channels: {
       // Filled once the AgentMail inbox exists: `npx convex run mail:provision '{"slug":"tony"}'`
