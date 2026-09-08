@@ -6,6 +6,8 @@
 //   pending -> signed -> sending -> sent -> live   (live: a site request the web agent carried out, seen by Firecrawl)
 //   pending -> rejected | expired | superseded
 //   sending -> failed -> signed (retry)
+//   sent -> failed (a site request only: the web agent said it could not, or the site never showed it)
+//   failed -> signed (ask the web agent again) | sent (look at the site again)
 //
 // The table is in convex/schema.ts and the mutations in convex/proposals.ts; this module is the
 // part that has no database in it: which moves are legal, and how a proposal is summarised.
@@ -20,8 +22,8 @@ export const TRANSITIONS: Record<Status, readonly Status[]> = {
   pending: ["signed", "rejected", "expired", "superseded"],
   signed: ["sending"],
   sending: ["sent", "failed"],
-  failed: ["signed"],
-  sent: ["live", "signed"], // a site request only: live when the page says it; signed again to ask the web agent again. A sent email stays sent (proposals.resend guards the kind).
+  failed: ["signed", "sent"], // signed: send again. sent: a site request only, to read the site again without asking the web agent again (facts.retrySite guards the kind).
+  sent: ["live", "signed", "failed"], // a site request only: live when the page says it; signed again to ask the web agent again; failed when the agent says it could not, or the site never showed it. A sent email stays sent (proposals.resend and facts.ts guard the kind).
   live: [],
   rejected: [],
   expired: [],

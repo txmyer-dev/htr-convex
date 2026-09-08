@@ -17,15 +17,16 @@ describe("lifecycle", () => {
     expect(canMove("sent", "sending")).toBe(false);
   });
 
-  test("a failed send goes back to signed and nowhere else", () => {
-    expect(TRANSITIONS.failed).toEqual(["signed"]);
-    expect(canMove("failed", "sent")).toBe(false);
+  test("a failed send goes back to signed; a failed site request may also go back to sent, to be read again", () => {
+    expect(TRANSITIONS.failed).toEqual(["signed", "sent"]);
+    expect(canMove("failed", "live")).toBe(false);
   });
 
-  test("a sent site request can go live; a sent email stays sent", () => {
+  test("a sent site request can go live, or fail when the agent says no; a sent email stays sent", () => {
     expect(canMove("sent", "live")).toBe(true);
+    expect(canMove("sent", "failed")).toBe(true);
     expect(canMove("live", "sent")).toBe(false);
-    expect(TRANSITIONS.sent).toEqual(["live", "signed"]);
+    expect(TRANSITIONS.sent).toEqual(["live", "signed", "failed"]);
   });
 
   test("terminal states have no exits", () => {

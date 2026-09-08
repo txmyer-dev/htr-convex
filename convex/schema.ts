@@ -106,6 +106,7 @@ export default defineSchema({
       threadId: v.optional(v.string()),
       messageId: v.optional(v.string()),
       references: v.optional(v.string()),
+      siteFailure: v.optional(v.union(v.literal("agent"), v.literal("unseen"))), // a failed site request: the web agent said no, or the site never showed it
     }),
     createdAt: v.number(),
     ruledAt: v.optional(v.number()),

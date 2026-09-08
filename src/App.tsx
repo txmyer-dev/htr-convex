@@ -79,6 +79,7 @@ function FrontDoor() {
 function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
   const tenant = useQuery(api.tenants.surface, { slug, key: keyToken });
   const rows = useQuery(api.proposals.list, { slug, key: keyToken, limit: 100 });
+  const retrySite = useMutation(api.facts.retrySite);
   const [note, setNote] = useState<string | null>(null);
   if (tenant === undefined || rows === undefined) return <main className="shell"><p className="muted">Loading…</p></main>;
   const pending = rows.filter((r) => r.status === "pending");
@@ -105,6 +106,11 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
               <li key={p.id}>
                 <span className={`status ${p.status}`}>{p.status}</span> {p.summary}
                 {p.error && <span className="error"> · {p.error}</span>}
+                {p.kind === "site" && p.status === "failed" && (
+                  <button className="small" onClick={async () => setNote(await retrySite({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>
+                    {p.siteFailure === "unseen" ? "Read the site again" : "Ask again"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

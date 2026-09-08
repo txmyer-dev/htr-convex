@@ -5,7 +5,7 @@
 
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { TENANTS } from "../convex/install";
 import type { InboundMail } from "../convex/lib/mail/inbound";
@@ -361,4 +361,86 @@ test("a site request the agent could not carry out can be asked again; an email 
   const m = (await t.run((ctx) => ctx.db.query("messages").order("desc").first()))!;
   const email = await t.mutation(internal.drafter.record, { messageId: m._id, body: "Hi.", basis: [], toName: "Marco" });
   expect(await t.mutation(internal.proposals.resend, { proposalId: email })).toBe("not a site request");
+});
+
+describe("when the site request does not go live", () => {
+  const WEB = "web-felaniam@agentmail.to";
+
+  /** A site request for the fact in `words`, signed and sent in thread `thr`. */
+  async function sentRequest(words: string, thr: string) {
+    const { t, tenant } = await setup();
+    await t.run(async (ctx) => { await ctx.db.patch(tenant._id, { business: { ...tenant.business, webAgent: WEB } }); });
+    await t.mutation(internal.rulings.fromEmail, { tenantId: tenant._id, from: OWNER, text: `remember ${words}` });
+    const f = (await t.run((ctx) => ctx.db.query("facts").first()))!;
+    const pid = (await t.mutation(internal.facts.proposeSite, { factId: f._id }))!;
+    await t.mutation(internal.digest.build, { tenantId: tenant._id });
+    await t.mutation(internal.rulings.fromEmail, { tenantId: tenant._id, from: OWNER, text: "1" });
+    await t.mutation(internal.proposals.claimForSend, { proposalId: pid });
+    await t.mutation(internal.proposals.finishSend, { proposalId: pid, ref: "m1", threadId: thr });
+    const { surfaceKey } = await import("../convex/surface");
+    const key = await surfaceKey(tenant.slug);
+    return { t, tenant, pid, key };
+  }
+  type T = Awaited<ReturnType<typeof setup>>["t"];
+  const events = (t: T) => t.run((ctx) => ctx.db.query("events").collect()).then((es) => es.map((e) => e.kind));
+  const scheduledNames = (t: T) => t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect()).then((ss) => ss.map((s) => String(s.name)));
+
+  test("the agent says Not live: the request fails with the agent's reason, nothing is verified, and the surface can ask again", async () => {
+    const { t, tenant, pid, key } = await sentRequest("dogs are welcome at the office", "thr_no");
+    const before = (await scheduledNames(t)).filter((n) => n.includes("verifySite")).length;
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_no", subject: "Re: Update", text: "Not live. I couldn't place this on the page safely: find is not unique: <p>. Nothing was changed.\n\n-- Felaniam web agent" }) });
+    const p = (await t.run((ctx) => ctx.db.get(pid)))!;
+    expect(p.status).toBe("failed");
+    expect(p.meta.siteFailure).toBe("agent");
+    expect(p.error).toBe("Your website's agent couldn't place it: I couldn't place this on the page safely: find is not unique: <p>.");
+    expect(await events(t)).toContain("site.failed");
+    expect((await scheduledNames(t)).filter((n) => n.includes("verifySite")).length).toBe(before); // the site is not read for a request the agent refused
+    const row = (await t.query(api.proposals.list, { slug: tenant.slug, key })).find((r) => r.id === pid)!;
+    expect(row).toMatchObject({ status: "failed", siteFailure: "agent" });
+
+    // the surface asks again: signed, a new thread, dispatched
+    expect(await t.mutation(api.facts.retrySite, { slug: tenant.slug, key, proposalId: pid })).toBe("Asking your website again.");
+    const again = (await t.run((ctx) => ctx.db.get(pid)))!;
+    expect(again.status).toBe("signed");
+    expect(again.error).toBeUndefined();
+    expect(again.meta.threadId).toBeUndefined();
+    expect(again.meta.siteFailure).toBeUndefined();
+    expect((await scheduledNames(t)).some((n) => n.includes("dispatch"))).toBe(true);
+    expect(await t.mutation(api.facts.retrySite, { slug: tenant.slug, key, proposalId: pid })).toBe("Nothing to retry."); // once
+    await expect(t.mutation(api.facts.retrySite, { slug: tenant.slug, key: "nope", proposalId: pid })).rejects.toThrow(/bad surface key/);
+  });
+
+  test("the agent says Live but the site never shows it: failed after the last read, and the surface can read the site again", async () => {
+    const { t, tenant, pid, key } = await sentRequest("parking is free after 6", "thr_yes");
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_yes", subject: "Re: Update", text: "Live. Added under Practical.\n\nhttps://felaniam.cloud" }) });
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("sent");
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid })).toBeNull(); // an early miss: still sent
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("sent");
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid, last: true })).toBeNull(); // the last miss: failed, and the surface says why
+    const p = (await t.run((ctx) => ctx.db.get(pid)))!;
+    expect(p.status).toBe("failed");
+    expect(p.meta.siteFailure).toBe("unseen");
+    expect(p.error).toMatch(/said it was live, but 3 reads/);
+    expect(await events(t)).toContain("site.unseen");
+
+    // the surface reads again, without asking the agent to edit twice: back to sent, verify scheduled, thread kept
+    expect(await t.mutation(api.facts.retrySite, { slug: tenant.slug, key, proposalId: pid })).toBe("Reading your site again.");
+    const again = (await t.run((ctx) => ctx.db.get(pid)))!;
+    expect(again.status).toBe("sent");
+    expect(again.error).toBeUndefined();
+    expect(again.meta.threadId).toBe("thr_yes");
+    expect(again.meta.siteFailure).toBeUndefined();
+    expect((await scheduledNames(t)).some((n) => n.includes("verifySite"))).toBe(true);
+    // and when the site says it, live as before
+    await t.mutation(internal.knowledge.store, { tenantId: tenant._id, pages: [{ url: "https://felaniam.cloud/visit", markdown: "Practical: parking is free after 6." }] });
+    expect(await t.mutation(internal.facts.markLive, { proposalId: pid, last: true })).toBe("https://felaniam.cloud/visit");
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("live");
+  });
+
+  test("the command line can resend a failed request too", async () => {
+    const { t, tenant, pid } = await sentRequest("we close at 2 on saturdays", "thr_cli");
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_cli", subject: "Re: Update", text: "Not live. I couldn't place this on the page safely: no edits. Nothing was changed." }) });
+    expect(await t.mutation(internal.proposals.resend, { proposalId: pid })).toBe("resent");
+    expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("signed");
+  });
 });

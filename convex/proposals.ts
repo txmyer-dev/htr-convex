@@ -178,25 +178,33 @@ export const list = query({
       id: p._id, status: p.status, kind: p.kind, toAddress: p.toAddress, toName: p.toName, body: p.body,
       basis: p.basis, summary: p.summary, deadline: p.deadline, digestNo: p.digestNo, edited: p.edited,
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, subject: p.meta.subject,
-      sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null,
+      sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null, siteFailure: p.meta.siteFailure ?? null,
     }));
   },
 });
 
 /**
- * `npx convex run proposals:resend '{"proposalId":"..."}'`: a site request the web agent could
- * not carry out goes back to signed and is dispatched again. Site requests only: a sent email is
- * sent, and asking twice would send it twice.
+ * A site request goes back to signed and is dispatched again, in a new thread: the web agent said
+ * it could not, the site never showed it, or nobody answered. Site requests only: a sent email is
+ * sent, and asking twice would send it twice. Sent or failed only: anything else is still on its way.
  */
+export async function resendSite(ctx: MutationCtx, p: Proposal): Promise<string> {
+  if (p.kind !== "site") return "not a site request";
+  if (p.status !== "sent" && p.status !== "failed") return `not sent (${p.status})`;
+  const moved = await transition(ctx, p._id, "signed", {
+    sentRef: undefined, sentAt: undefined, error: undefined, meta: { ...p.meta, threadId: undefined, siteFailure: undefined },
+  });
+  if (!moved) return "no";
+  await appendEvent(ctx, p.tenantId, "site.resent", { proposalId: p._id, from: p.status });
+  await ctx.scheduler.runAfter(0, internal.mail.dispatch, { proposalId: p._id });
+  return "resent";
+}
+
+/** `npx convex run proposals:resend '{"proposalId":"..."}'`: the same from the command line. */
 export const resend = internalMutation({
   args: { proposalId: v.id("proposals") },
   handler: async (ctx, { proposalId }): Promise<string> => {
     const p = await ctx.db.get(proposalId);
-    if (!p || p.kind !== "site") return "not a site request";
-    if (p.status !== "sent") return `not sent (${p?.status})`;
-    if (!(await transition(ctx, proposalId, "signed", { sentRef: undefined, sentAt: undefined, meta: { ...p.meta, threadId: undefined } }))) return "no";
-    await appendEvent(ctx, p.tenantId, "site.resent", { proposalId });
-    await ctx.scheduler.runAfter(0, internal.mail.dispatch, { proposalId });
-    return "resent";
+    return p ? await resendSite(ctx, p) : "no such proposal";
   },
 });

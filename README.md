@@ -41,6 +41,10 @@ one frees.
    digest.run (scheduled, debounced 60 s / at the owner's hour) ── build (numbering) ── one email to the owner
                                                                                         Send / Skip links · the live surface
    owner rules ── by reply · by link · from the surface ──▶ proposal pending → signed ──▶ mail.dispatch → sent
+   owner teaches ── an edit on a named gap · "remember ..." ──▶ facts (distilled once) ──▶ every later draft
+                                                              └─ the site doesn't say it? ──▶ a `site` proposal, ruled like any draft
+   the web agent ◀── signed request (x-htr-site), owner cc'd ── mail.dispatch          (a second agent, its own inbox, on the VPS)
+   the web agent ──▶ "Live. ..." / "Not live. ..." in the thread ──▶ mail.receive ──▶ Firecrawl re-reads the site ──▶ sent → live | failed
    crons: hourly expiry (expire, hold notice, re-list) · digest clock · demo sweep every 15 min · weekly site re-read
 ```
 
@@ -52,7 +56,7 @@ tests; scheduled actions are visible, never run.
 
 ```bash
 npm install
-npm test                      # 114 tests, offline
+npm test                      # 118 tests, offline
 npx convex dev                # first time: creates the deployment, writes .env.local
 ```
 
@@ -108,7 +112,7 @@ For an anonymous local backend (no account): `npx convex deployment select local
 | `GET /healthz` | anyone | liveness |
 
 Public Convex functions (the React app): `proposals.list`, `tenants.surface`,
-`rulings.ruleFromSurface`, `mail.retrySend`, `demo.sendAsCustomer`, `demo.end`. All take the
+`rulings.ruleFromSurface`, `facts.retrySite`, `mail.retrySend`, `demo.sendAsCustomer`, `demo.end`. All take the
 surface key. `demo.start` is the one public function that takes none: it is the front door.
 
 ## Who may rule
@@ -127,6 +131,62 @@ that is the only one the loop trusts.
 
 Convex Auth is the step after this, when a second person needs into the same room; a demo tenant
 made at the front door is the same shape, with the visitor's email as the owner's.
+
+## Two agents
+
+Hold the Room does not touch the website. When the owner teaches it something the site does not
+say, it asks the agent that does: [the web agent](https://github.com/txmyer-dev/htr-web-agent),
+one file of Node on the VPS next to the site's nginx container, with its own AgentMail address.
+The two never share a database, a process, or a key that rules anything. They talk the way two
+people would, in a thread the owner is copied on, and each one checks the other's work.
+
+1. **A fact becomes a request.** The owner's words are distilled once into a statement about the
+   business. For a tenant that names a web agent (`business.webAgent`), the statement becomes a
+   proposal of kind `site`: "Please add this to felaniam.cloud, where it belongs, in the site's
+   own voice: ... Reply in this thread when it is live." It is numbered in the digest and shown
+   on the surface, and nothing leaves until the owner rules it, like any draft.
+2. **The request goes out signed.** A new thread from the tenant's inbox to the agent, the owner
+   cc'd, with one header: `x-htr-site: <tenant>:<proposal>:<HMAC>` under `HTR_SITE_SECRET`. The
+   agent verifies the Svix signature on its webhook, then the header, then a tenant allowlist;
+   anything else is logged and never answered, so nothing can make it talk.
+3. **The agent does the work and says so.** It hands the page and the fact to a model, applies
+   find/replace edits under guards (each find exactly once, no net deletion, the fact's words on
+   the page), backs up, writes, and replies-all in the thread. The first line of the reply is the
+   contract: `Live. <where it went>` or `Not live. <why>. Nothing was changed.`
+4. **HTR believes the site, not the reply.** The reply is matched to the request by thread id
+   and never drafted. `Live` schedules a Firecrawl re-read: when a page carries most of the fact's
+   words the proposal moves `sent → live` and the fact records the page. Three misses, five
+   minutes apart, and the request is `failed` with the reason on the surface and a button to read
+   the site again. `Not live` is `failed` at once, with the agent's reason and a button to ask
+   again, which sends the request afresh in a new thread. The command line has the same:
+   `npx convex run proposals:resend '{"proposalId":"..."}'`.
+
+The site's own deploy refuses to push over a page the agent has changed; `deploy/pull.sh` there
+brings the live page back first.
+
+## Where this goes: agents on a relay
+
+What the two agents do is already relay-shaped: a signed message, addressed to a public identity,
+in a thread, answered by a signed message, with the truth checked outside the conversation. Email
+is the transport because it exists and the owner already reads it, and AgentMail is the
+middleman: it holds both inboxes, delivers both directions, and its webhooks are how either agent
+finds out anything happened.
+
+The next shape drops the middleman. Each agent holds a keypair and is known by its public key
+(NIP-19 `npub`), not an address a provider issued. A request is a signed event, encrypted to the
+recipient (NIP-17 / NIP-44), published to relays both agents read; the reply is another, tagged
+to the first, so the thread is the tags. NIP-42 lets a relay ask the agent to prove its key
+before serving it, so an agent's inbox is readable by the agent alone and a relay is a dumb pipe
+anyone can run. No shared secret on the VPS, no provider holding the mail, no webhook to verify:
+the signature on the event is the whole of who-sent-this. Everything above the transport stays
+exactly as it is here: the proposal lifecycle, the owner's ruling, the site as the truth.
+
+The hurdle, considered and not yet answered: the owner is cc'd. On email the owner is a full
+participant in the agents' thread for free, reads both sides in the client they already have,
+and can reply into it. On a relay the owner would need a key and a client, or a mirror that
+renders the agents' thread back to them somewhere they look, and a way for their reply to
+count as a ruling. That mirror may just be the surface; it may be email, kept for the human
+while the agents move to the relay. Not for this hackathon.
 
 ## Rulings
 

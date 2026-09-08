@@ -1,7 +1,7 @@
 // From the room to the site, the pure part: the request, its subject, and whether a page says it.
 import { describe, expect, test } from "vitest";
 import { siteToken } from "../convex/lib/rulings/token";
-import { saysOnSite, siteRequest, siteSubject } from "../convex/lib/site/publish";
+import { agentVerdict, saysOnSite, siteRequest, siteSubject } from "../convex/lib/site/publish";
 
 describe("the request", () => {
   test("says where, what, and how to answer", () => {
@@ -17,6 +17,18 @@ describe("the request", () => {
     expect(await siteToken("s", "tony", "p1")).toBe(a);
     expect(await siteToken("s", "tony", "p2")).not.toBe(a);
     expect(await siteToken("s", "demo", "p1")).not.toBe(a);
+  });
+});
+
+describe("the agent's reply", () => {
+  test("Live did it; Not live did not, with the reason; anything else decides nothing", () => {
+    expect(agentVerdict("Live. I added the parking details to the Practical section.\n\nhttps://felaniam.cloud\n\n-- Felaniam web agent")).toEqual({ verdict: "live" });
+    expect(agentVerdict("\n  Live (written; the site did not answer yet). Added under Visit.")).toEqual({ verdict: "live" });
+    expect(agentVerdict("Not live. I couldn't place this on the page safely: find is not unique: <p>. Nothing was changed.\n\n-- Felaniam web agent"))
+      .toEqual({ verdict: "failed", reason: "I couldn't place this on the page safely: find is not unique: <p>." });
+    expect(agentVerdict("I couldn't place this on the page safely: no edits. Nothing was changed.")).toMatchObject({ verdict: "failed", reason: "I couldn't place this on the page safely: no edits." });
+    expect(agentVerdict("Thanks, looking into it.")).toEqual({ verdict: "unknown" });
+    expect(agentVerdict("")).toEqual({ verdict: "unknown" });
   });
 });
 

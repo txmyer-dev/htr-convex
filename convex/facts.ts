@@ -9,14 +9,15 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, type MutationCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { extractJson, normalizeBaseUrl } from "./drafter";
 import { appendEvent } from "./events";
 import { chatCompletion } from "./lib/llm/openaiCompat";
 import type { InboundMail } from "./lib/mail/inbound";
-import { saysOnSite, SITE_NAME, siteRequest, siteSubject } from "./lib/site/publish";
-import { markLive as markLiveProposal, propose, withStatus } from "./proposals";
+import { agentVerdict, saysOnSite, SITE_NAME, siteRequest, siteSubject } from "./lib/site/publish";
+import { markLive as markLiveProposal, propose, resendSite, transition, withStatus } from "./proposals";
+import { requireSurface } from "./surface";
 
 export const DISTILL =
   "You turn a business owner's reply into what it tells you about the business. " +
@@ -140,10 +141,39 @@ export async function acknowledgeSite(ctx: MutationCtx, tenant: Doc<"tenants">, 
     await appendEvent(ctx, tenant._id, "site.unmatched", { from: m.fromAddress, threadId: m.threadId, subject: m.subject });
     return null;
   }
-  await appendEvent(ctx, tenant._id, "site.acknowledged", { proposalId: p._id, text: m.text.slice(0, 200) });
+  const said = agentVerdict(m.text);
+  await appendEvent(ctx, tenant._id, "site.acknowledged", { proposalId: p._id, verdict: said.verdict, text: m.text.slice(0, 200) });
+  if (said.verdict === "failed") {
+    // The agent says it could not place it and changed nothing. The owner, copied on that reply,
+    // already knows; the surface says so too, with the reason, and offers to ask again.
+    await transition(ctx, p._id, "failed", { error: `Your website's agent couldn't place it: ${said.reason}`, meta: { ...p.meta, siteFailure: "agent" } });
+    await appendEvent(ctx, tenant._id, "site.failed", { proposalId: p._id, reason: said.reason });
+    return p._id;
+  }
   await ctx.scheduler.runAfter(0, internal.facts.verifySite, { proposalId: p._id, attempt: 1 });
   return p._id;
 }
+
+/**
+ * The surface's button on a failed site request. The web agent said no: ask it again (the
+ * request goes out signed, in a new thread). The agent said yes but the site never showed it:
+ * look at the site again without asking the agent, which would edit the page twice.
+ */
+export const retrySite = mutation({
+  args: { slug: v.string(), key: v.string(), proposalId: v.id("proposals") },
+  handler: async (ctx, { slug, key, proposalId }): Promise<string> => {
+    const tenant = await requireSurface(ctx, slug, key);
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.tenantId !== tenant._id || p.kind !== "site" || p.status !== "failed") return "Nothing to retry.";
+    if (p.meta.siteFailure === "unseen") {
+      await transition(ctx, proposalId, "sent", { error: undefined, meta: { ...p.meta, siteFailure: undefined } });
+      await appendEvent(ctx, tenant._id, "site.recheck", { proposalId });
+      await ctx.scheduler.runAfter(0, internal.facts.verifySite, { proposalId, attempt: 1 });
+      return "Reading your site again.";
+    }
+    return (await resendSite(ctx, p)) === "resent" ? "Asking your website again." : "Nothing to retry.";
+  },
+});
 
 export const VERIFY_ATTEMPTS = 3;
 export const VERIFY_RETRY_MS = 5 * 60_000;
@@ -155,16 +185,20 @@ export const verifySite = internalAction({
     const p: Doc<"proposals"> | null = await ctx.runQuery(internal.proposals.get, { proposalId });
     if (!p || p.status !== "sent" || p.kind !== "site") return null;
     await ctx.runAction(internal.knowledge.refreshTenant, { tenantId: p.tenantId });
-    const url: string | null = await ctx.runMutation(internal.facts.markLive, { proposalId });
-    if (!url && attempt < VERIFY_ATTEMPTS) await ctx.scheduler.runAfter(VERIFY_RETRY_MS, internal.facts.verifySite, { proposalId, attempt: attempt + 1 });
+    const last = attempt >= VERIFY_ATTEMPTS;
+    const url: string | null = await ctx.runMutation(internal.facts.markLive, { proposalId, last });
+    if (!url && !last) await ctx.scheduler.runAfter(VERIFY_RETRY_MS, internal.facts.verifySite, { proposalId, attempt: attempt + 1 });
     return url;
   },
 });
 
-/** The transaction at the end: the page that says it, the proposal live, the fact pointing at the page. */
+/**
+ * The transaction at the end: the page that says it, the proposal live, the fact pointing at the
+ * page. On the last read (`last`) a miss is a failure the surface shows, not a silent event.
+ */
 export const markLive = internalMutation({
-  args: { proposalId: v.id("proposals") },
-  handler: async (ctx, { proposalId }): Promise<string | null> => {
+  args: { proposalId: v.id("proposals"), last: v.optional(v.boolean()) },
+  handler: async (ctx, { proposalId, last }): Promise<string | null> => {
     const p = await ctx.db.get(proposalId);
     if (!p || p.status !== "sent" || p.kind !== "site" || p.sourceKind !== "fact" || !p.sourceId) return null;
     const f = await ctx.db.get(p.sourceId as Id<"facts">);
@@ -172,7 +206,14 @@ export const markLive = internalMutation({
     const pages = await ctx.db.query("knowledge").withIndex("by_tenant_url", (q) => q.eq("tenantId", p.tenantId)).take(100);
     const url = saysOnSite(factText(f), pages);
     if (!url) {
-      await appendEvent(ctx, p.tenantId, "site.not_yet", { proposalId, pages: pages.length });
+      await appendEvent(ctx, p.tenantId, "site.not_yet", { proposalId, pages: pages.length, last: !!last });
+      if (last) {
+        await transition(ctx, proposalId, "failed", {
+          error: `Your website's agent said it was live, but ${VERIFY_ATTEMPTS} reads of the site haven't found it.`,
+          meta: { ...p.meta, siteFailure: "unseen" },
+        });
+        await appendEvent(ctx, p.tenantId, "site.unseen", { proposalId, factId: f._id });
+      }
       return null;
     }
     await markLiveProposal(ctx, proposalId);

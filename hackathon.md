@@ -2,7 +2,7 @@
 
 - **Project:** Hold the Room
 - **Event:** Convex All Gas Hackathon
-- **What it does:** An email assistant that reads everything, drafts every reply in the owner's voice with quotes from the counterparty, and sends nothing until the owner rules by reply, signed link, or a live page.
+- **What it does:** An email assistant that reads everything, drafts every reply in the owner's voice with quotes from the counterparty, and sends nothing until the owner rules by reply, signed link, or a live page. What the owner teaches it that the website does not say, it asks a second agent to put on the site, signed, and reads the site to check.
 - **Live app:** https://famous-spider-906.convex.site
 - **Repo:** private
 - **Frontend:** Convex static hosting
@@ -12,7 +12,7 @@
 - **Auth:** none (no accounts by design: the owner's email address is the identity for rulings by reply; Send / Skip links and the surface URL are HMAC-signed per tenant)
 - **AI models:** gpt-5.4-mini
 - **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-06T07:20:00Z
+- **Last updated:** 2026-09-08T00:10:00Z
 
 ## Log
 
@@ -254,3 +254,23 @@ call falls back to the ranked pages. Demo purge now takes the chunks with it. 11
 (`convex/schema.ts`, `convex/knowledge.ts`, `convex/drafter.ts`, `convex/demo.ts`,
 `convex/lib/knowledge/chunk.ts`, `convex/lib/llm/embed.ts`, `tests/chunk.test.ts`,
 `tests/grounding.test.ts`, `.env.example`).
+
+### 2026-09-07 - the request that does not go live
+The two agents had a success path and nothing else. The web agent's "I couldn't place this" reply
+was handled like "Live.": the request stayed `sent`, three re-reads logged `site.not_yet`, and the
+only way back was a command line. Now the first line of the agent's reply is a contract: `Live.`
+schedules the Firecrawl re-read as before; `Not live. <why>. Nothing was changed.` moves the request
+`sent -> failed` at once, with the agent's reason on the surface and an "Ask again" button that
+sends it afresh in a new thread (`facts.retrySite`, the same as `proposals:resend`). And a `Live`
+that three reads of the site never confirm is `failed` too, "said it was live, but 3 reads of the
+site haven't found it", with a "Read the site again" button that re-reads without asking the agent
+to edit the page twice (`failed -> sent`, the thread kept). The lifecycle grew the two edges; the
+web agent's reply is built by one function with a test on the first line. The README now draws the
+second agent in the shape, says how the two talk in four steps, and where it goes: agents on a
+relay with their own keys (NIP-19, NIP-17/44, NIP-42) instead of a mail provider in the middle,
+with the one open hurdle named, the owner cc'd on the thread. All three repos are now on GitHub
+(htr-convex, htr-web-agent, felaniam-site, private); the live page was pulled back into the site
+repo with the agent's first edit in it. Deployed to the web agent and to the deployment. 118 tests
+(`convex/lib/site/publish.ts`, `convex/lib/proposals/lifecycle.ts`, `convex/facts.ts`,
+`convex/proposals.ts`, `convex/schema.ts`, `src/App.tsx`, `tests/publish.test.ts`,
+`tests/lifecycle.test.ts`, `tests/loop.test.ts`; `~/dev/htr-web-agent/{server.mjs,test.mjs}`).

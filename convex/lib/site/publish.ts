@@ -27,6 +27,22 @@ export function siteRequest(site: string, statement: string): string {
   return `Please add this to ${hostOf(site)}, where it belongs, in the site's own voice:\n\n${statement}\n\nReply in this thread when it is live.`;
 }
 
+/**
+ * What the web agent's reply says, read from its first line. The agent's contract: a reply that
+ * starts "Live" did it; one that starts "Not live" (or, older, "I couldn't place this") did not,
+ * and the rest of the line is the reason. Anything else is an acknowledgment that decides nothing:
+ * the site is read either way, and the site is the truth.
+ */
+export function agentVerdict(text: string): { verdict: "live" | "failed" | "unknown"; reason?: string } {
+  const first = String(text ?? "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  if (/^live\b/i.test(first)) return { verdict: "live" };
+  if (/^not live\b/i.test(first) || /^i couldn't place/i.test(first) || /nothing was changed/i.test(first)) {
+    const reason = first.replace(/^not live[.:]?\s*/i, "").replace(/\s*nothing was changed\.?\s*$/i, "").trim();
+    return { verdict: "failed", reason: reason || first };
+  }
+  return { verdict: "unknown" };
+}
+
 export function siteSubject(site: string, statement: string): string {
   const short = statement.replace(/\s+/g, " ").trim();
   return `Update ${hostOf(site)}: ${short.length > 60 ? `${short.slice(0, 59).trimEnd()}…` : short}`;
