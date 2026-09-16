@@ -23,9 +23,10 @@ page. A draft in your voice is on the page in seconds, the numbered digest is in
 minute later, and your reply, or a tap, rules it. Thirty minutes later the inbox goes back to the pool
 and a day after that the demo is forgotten.
 
-Demo inboxes are leased from a small pool (`HTR_DEMO_POOL`, default 1: AgentMail's free plan
-allows three, client zero holds one, and the web agent holds one). If every inbox is taken, the door says when the next
-one frees.
+Demo inboxes are leased from a small pool sized by `HTR_DEMO_POOL` (8 in production — the
+Developer plan's 10-inbox account cap, less client zero's inbox and the web agent's). The pool
+grows on demand, or is filled ahead of time with `npx convex run demo:warm`. If every inbox is
+taken, the door says when the next one frees.
 
 ## The shape
 

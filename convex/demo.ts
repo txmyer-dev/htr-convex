@@ -2,8 +2,9 @@
 // an inbox address and the live surface; the first email to the address becomes a draft on the
 // page in seconds, a digest in their own inbox a minute later, and their reply rules it.
 //
-// AgentMail inboxes are scarce (three on the free plan), so a demo leases one from a small pool
-// instead of making its own. The pool grows on demand to HTR_DEMO_POOL, and every inbox in it
+// A demo leases an inbox from a small pool instead of making its own, so concurrent trials are
+// bounded by HTR_DEMO_POOL rather than by whatever AgentMail plan is behind the key. The pool
+// grows on demand up to HTR_DEMO_POOL (or is pre-warmed with `demo:warm`), and every inbox in it
 // has one webhook, pointed at /webhooks/pool/mail, whose secret lives with the inbox: the route
 // finds the inbox in the event, then the tenant holding its lease. A lease lasts thirty minutes; the
 // hourly sweep releases what has expired and, a day later, forgets the demo's rows entirely.
@@ -241,7 +242,7 @@ export const forget = internalMutation({
 
 /**
  * `npx convex run demo:retire '{"inboxId":"room-2-xxxx@agentmail.to"}'`: give a pool inbox back to
- * AgentMail (the free plan has three, and one is needed elsewhere). Any demo on it ends now.
+ * AgentMail when it is no longer needed. Any demo on it ends now.
  */
 export const retire = internalAction({
   args: { inboxId: v.string() },
@@ -256,6 +257,31 @@ export const retire = internalAction({
     }
     await c.deleteInbox(inboxId);
     return "retired";
+  },
+});
+
+// ---- growing the pool ahead of demand -------------------------------------------------------
+
+/**
+ * `npx convex run demo:warm` (optionally '{"to":10}'): create pool inboxes now so the first
+ * visitor after a quiet spell waits on nothing. Grows to `to`, clamped to HTR_DEMO_POOL; never
+ * shrinks. Returns how many it made and the pool total.
+ */
+export const warm = internalAction({
+  args: { to: v.optional(v.number()) },
+  handler: async (ctx, { to }): Promise<{ created: number; total: number }> => {
+    const target = Math.min(to ?? poolCap(), poolCap());
+    const c = client();
+    let state = await ctx.runQuery(internal.demo.poolState, {});
+    let created = 0;
+    while (state.total < target) {
+      const inbox = await c.createInbox({ username: `room-${state.total + 1}-${token(4)}`, displayName: "Hold the Room" });
+      const hook = await c.createWebhook({ url: `${siteUrl()}${POOL_ROUTE}`, eventTypes: ["message.received"], inboxIds: [inbox.inboxId] });
+      await ctx.runMutation(internal.demo.register, { inboxId: inbox.inboxId, address: inbox.inboxId, webhookId: hook.webhookId, webhookSecret: hook.secret });
+      created++;
+      state = await ctx.runQuery(internal.demo.poolState, {});
+    }
+    return { created, total: state.total };
   },
 });
 

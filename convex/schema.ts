@@ -198,8 +198,8 @@ export default defineSchema({
     .index("by_tenant", ["tenantId"])
     .vectorIndex("by_embedding", { vectorField: "embedding", dimensions: 1536, filterFields: ["tenantId"] }),
 
-  // The front door's inboxes. AgentMail inboxes are few (three on the free plan), so demos lease
-  // one from this pool rather than making their own; the webhook and its secret live with the inbox.
+  // The front door's inboxes. Demos lease one from this pool rather than making their own, so
+  // concurrent trials are bounded by HTR_DEMO_POOL; the webhook and its secret live with the inbox.
   demoInboxes: defineTable({
     inboxId: v.string(),
     address: v.string(),
