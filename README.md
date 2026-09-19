@@ -148,8 +148,9 @@ people would, in a thread the owner is copied on, and each one checks the other'
    on the surface, and nothing leaves until the owner rules it, like any draft.
 2. **The request goes out signed.** A new thread from the tenant's inbox to the agent, the owner
    cc'd, with one header: `x-htr-site: <tenant>:<proposal>:<HMAC>` under `HTR_SITE_SECRET`. The
-   agent verifies the Svix signature on its webhook, then the header, then a tenant allowlist;
-   anything else is logged and never answered, so nothing can make it talk.
+   agent verifies the Svix signature on its webhook, then that the mail came from HTR's own
+   inbox (`ALLOWED_SENDERS`), then the header, then a tenant allowlist; anything else is logged
+   and never answered, so nothing can make it talk.
 3. **The agent does the work and says so.** It hands the page and the fact to a model, applies
    find/replace edits under guards (each find exactly once, no net deletion, the fact's words on
    the page), backs up, writes, and replies-all in the thread. The first line of the reply is the
@@ -219,9 +220,17 @@ relay shape (each agent known by its public key, NIP-17 encrypted events, NIP-42
 the option for agents on hosts nobody shares. Above the transport nothing changes: the lifecycle,
 the ruling, the surface as the truth.
 
-**The honest limit today:** the web agent and HTR share one `HTR_SITE_SECRET`. The header proves a
-request came from HTR, not which agent is talking, so a second executor would need its own secret.
-The agent registry is the first step of the spine for that reason.
+**The honest limits today**, so nobody reads this as tighter than it is:
+
+- **One shared secret.** The web agent and HTR hold the same `HTR_SITE_SECRET`, so the header
+  proves a request came from HTR, not which agent is talking. A second executor needs its own
+  secret, which is why the agent registry is the first step of the spine. The secret is required
+  and must differ from `HTR_RULING_SECRET` (`surface.ts`): the VPS holds a copy of it, and the
+  ruling secret signs Send / Skip links and derives every surface key.
+- **The header signs the request, not the words.** It binds tenant and proposal, and it rides on
+  the copy of the request the owner is cc'd, so a header that leaked could ride on other words.
+  The sender check is what stands in the way today. Next: a hash of the statement in the token,
+  and an expiry.
 
 ## Rulings
 
@@ -281,7 +290,8 @@ agent that edits the site, its own AgentMail inbox on your own server), every di
 becomes a proposal of a third kind, `site`: "Please add this to felaniam.cloud: Dogs are welcome
 at the office." It is numbered in the digest and ruled like any draft. Signed, it goes out as a
 new thread to the web agent with the owner copied and a signed header on it (`x-htr-site`, an
-HMAC of tenant and proposal under `HTR_SITE_SECRET`), so the agent acts only on what HTR sent.
+HMAC of tenant and proposal under `HTR_SITE_SECRET`), so the agent acts only on mail from HTR's
+inbox that carries HTR's signature.
 The agent replies in the thread when the page is live; mail from its address is never drafted,
 only matched to the request by thread. Then Firecrawl reads the site again, and when a page says
 what the fact says, the proposal is `live` and the fact points at the page. The assistant taught

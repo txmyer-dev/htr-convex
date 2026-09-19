@@ -46,7 +46,15 @@ export async function liveSurfaceUrl(slug: string): Promise<string> {
   return `${siteUrl()}/?t=${encodeURIComponent(slug)}&k=${await surfaceKey(slug)}`;
 }
 
-/** The secret behind site requests to the web agent: its own, so the VPS never holds the ruling secret; falls back to it. */
+/**
+ * The secret behind site requests to the web agent: its own, and never the ruling secret. The VPS
+ * holds a copy of this one, so the two must not be the same key: the ruling secret signs Send /
+ * Skip links and derives every surface key, and an agent that held it could rule as the owner.
+ * Missing means no site request goes out, which is the safe failure.
+ */
 export function siteSecret(): string {
-  return process.env.HTR_SITE_SECRET || rulingSecret();
+  const s = process.env.HTR_SITE_SECRET;
+  if (!s) throw new Error("HTR_SITE_SECRET is not set on the deployment");
+  if (s === process.env.HTR_RULING_SECRET) throw new Error("HTR_SITE_SECRET must not be the ruling secret: the web agent holds a copy of it");
+  return s;
 }
