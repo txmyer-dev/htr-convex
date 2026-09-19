@@ -57,7 +57,7 @@ tests; scheduled actions are visible, never run.
 
 ```bash
 npm install
-npm test                      # 118 tests, offline
+npm test                      # 126 tests, offline
 npx convex dev                # first time: creates the deployment, writes .env.local
 ```
 
@@ -112,7 +112,7 @@ For an anonymous local backend (no account): `npx convex deployment select local
 | `GET /tenants/{slug}/proposals?k=` | you | every proposal and its status |
 | `GET /healthz` | anyone | liveness |
 
-Public Convex functions (the React app): `proposals.list`, `tenants.surface`,
+Public Convex functions (the React app): `proposals.list`, `proposals.timeline`, `tenants.surface`,
 `rulings.ruleFromSurface`, `facts.retrySite`, `mail.retrySend`, `demo.sendAsCustomer`, `demo.end`. All take the
 surface key. `demo.start` is the one public function that takes none: it is the front door.
 
@@ -165,29 +165,63 @@ people would, in a thread the owner is copied on, and each one checks the other'
 The site's own deploy refuses to push over a page the agent has changed; `deploy/pull.sh` there
 brings the live page back first.
 
-## Where this goes: agents on a relay
+### What happened
 
-What the two agents do is already relay-shaped: a signed message, addressed to a public identity,
-in a thread, answered by a signed message, with the truth checked outside the conversation. Email
-is the transport because it exists and the owner already reads it, and AgentMail is the
-middleman: it holds both inboxes, delivers both directions, and its webhooks are how either agent
-finds out anything happened.
+Every ruled item on the surface has a "What happened" line under it, and a site request still on
+its way opens by itself. It is the request's story in order, live, one line per step:
 
-The next shape drops the middleman. Each agent holds a keypair and is known by its public key
-(NIP-19 `npub`), not an address a provider issued. A request is a signed event, encrypted to the
-recipient (NIP-17 / NIP-44), published to relays both agents read; the reply is another, tagged
-to the first, so the thread is the tags. NIP-42 lets a relay ask the agent to prove its key
-before serving it, so an agent's inbox is readable by the agent alone and a relay is a dumb pipe
-anyone can run. No shared secret on the VPS, no provider holding the mail, no webhook to verify:
-the signature on the event is the whole of who-sent-this. Everything above the transport stays
-exactly as it is here: the proposal lifecycle, the owner's ruling, the site as the truth.
+```
+3:02 PM  Request drafted for your website's agent, from what you taught it
+3:04 PM  Signed by you, by email reply
+3:04 PM  Sent to your website's agent, signed, with you copied
+3:05 PM  The agent replied: "Live. Added to the visit section."
+3:05 PM  Read the site (4 pages): not there yet
+3:10 PM  Read the site: it's there (https://felaniam.cloud/visit). Live.
+```
 
-The hurdle, considered and not yet answered: the owner is cc'd. On email the owner is a full
-participant in the agents' thread for free, reads both sides in the client they already have,
-and can reply into it. On a relay the owner would need a key and a client, or a mirror that
-renders the agents' thread back to them somewhere they look, and a way for their reply to
-count as a ruling. That mirror may just be the surface; it may be email, kept for the human
-while the agents move to the relay. Not for this hackathon.
+Nothing new is recorded to tell it. Every handler already appends an event, and every ruling is
+already a row; an event that names a request now carries its id on the row as well as in the
+payload (`events.appendEvent` lifts it), both tables are indexed by request, and
+`proposals.timeline` merges the two in the order they were written. The words live in one pure
+function (`lib/proposals/timeline.ts`). A request still on its way ends with where it is now:
+waiting on your ruling, waiting for the agent's reply, or reading the site again shortly. The
+point is the one step 4 makes: the agent's `Live.` is one line of the story and the re-read is
+another, so the page shows which of them made it live. Events written before this carry the id only
+in the payload; `npx convex run events:backfillProposalIds '{"paginationOpts":{"numItems":200,"cursor":null}}'`
+names them, one page at a time.
+
+## Where this goes: the spine
+
+Two agents that never share a key, a request that carries a signature, a ruling before anything
+moves, and the surface as the truth, not the reply: that is already the shape of a larger system.
+This deployment is where it grows. **Agents think, executors act, the spine carries, the owner
+rules.**
+
+| Here today | Becomes |
+|---|---|
+| `proposals` (email, sms, site) and their lifecycle | typed **requests** between agents, same lifecycle, same digest, same rulings |
+| the site protocol: request, ruling, signed header, edit, Firecrawl re-read decides `live` | the template every executor follows: it acts only on a ruled, signed request and proves the effect on the surface itself |
+| `business.webAgent` and one `HTR_SITE_SECRET` | a registry of **agents**, each with its own secret, what it accepts, and whom it may ask for what |
+| `events` and the request timeline above | the one event log, and a record of every run under every request |
+| the surface and the digest | **the desk**: one queue for everything that waits on the owner, with a push to the phone |
+
+The rules that make it safe are the ones already here. Agents that draft hold no keys to the
+things they change; an **executor** owns exactly one surface (the web agent owns one site's
+files) and acts only on a request the spine has checked against the registry and the owner has
+ruled. The spine checks and carries; it never picks a recipient and never decides. A request of a
+kind the sender is not registered for is refused, with an event, never dropped. Next after the
+web agent: a publisher (a post is a pull request, the owner's ruling is the merge, and the check is
+the live URL) and a clerk for the owner's notes.
+
+**Transport stays pluggable.** Email is the transport today because it exists and the owner already
+reads it. Agents on servers the owner runs will speak signed HTTP to the spine instead, and the
+relay shape (each agent known by its public key, NIP-17 encrypted events, NIP-42 relay auth) stays
+the option for agents on hosts nobody shares. Above the transport nothing changes: the lifecycle,
+the ruling, the surface as the truth.
+
+**The honest limit today:** the web agent and HTR share one `HTR_SITE_SECRET`. The header proves a
+request came from HTR, not which agent is talking, so a second executor would need its own secret.
+The agent registry is the first step of the spine for that reason.
 
 ## Rulings
 
@@ -266,8 +300,9 @@ convex/convex.config.ts   components: static hosting (the surface, served from t
 convex/schema.ts          the spine: tenants, messages, proposals, rulings, digests, events, actions, contacts, knowledge, chunks (vector index), facts, demoInboxes
 convex/install.ts         the tenant block (client zero)
 convex/demo.ts            the front door: the inbox pool, the lease, the pretend customer, the sweep
-convex/lib/               pure: rulings/parse+token, digest/render+expiry, reader/waiting+deadline+automated, mail/svix+inbound+agentmail, knowledge/domain+rank+links+chunk, llm/openaiCompat+embed, site/publish, time
-convex/proposals.ts       the lifecycle as guarded transitions
+convex/lib/               pure: rulings/parse+token, digest/render+expiry, reader/waiting+deadline+automated, mail/svix+inbound+agentmail, knowledge/domain+rank+links+chunk, llm/openaiCompat+embed, proposals/lifecycle+timeline, site/publish, time
+convex/proposals.ts       the lifecycle as guarded transitions; the surface's list and each request's timeline
+convex/events.ts          the event log (the request an event names, on the row) and the idempotency ledger
 convex/rulings.ts         apply a ruling once: by reply, by link, from the surface; hold; expiry
 convex/facts.ts           the second brain: what the owner teaches, distilled once; and from the room to the site: the request, the acknowledgment, the re-read
 convex/digest.ts          number, debounce, build, send

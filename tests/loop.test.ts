@@ -437,6 +437,45 @@ describe("when the site request does not go live", () => {
     expect((await t.run((ctx) => ctx.db.get(pid)))!.status).toBe("live");
   });
 
+  test("the surface tells the request's story: every step, from the draft to the page, and nothing to a wrong key", async () => {
+    const { t, tenant, pid, key } = await sentRequest("the kettle is always on", "thr_story");
+    const story = () => t.query(api.proposals.timeline, { slug: tenant.slug, key, proposalId: pid });
+    expect((await story()).at(-1)).toEqual({ text: "Waiting for the agent's reply", tone: "wait" });
+
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_story", subject: "Re: Update", text: "Live. Added to the visit section.\n\n-- Felaniam web agent" }) });
+    await t.mutation(internal.facts.markLive, { proposalId: pid });
+    expect((await story()).at(-1)).toEqual({ text: "Reading the site again shortly", tone: "wait" });
+    await t.mutation(internal.knowledge.store, { tenantId: tenant._id, pages: [{ url: "https://felaniam.cloud/visit", markdown: "Visit: the kettle is always on." }] });
+    await t.mutation(internal.facts.markLive, { proposalId: pid });
+
+    const steps = await story();
+    expect(steps.map((s) => s.text)).toEqual([
+      "Request drafted for your website's agent, from what you taught it",
+      "Signed by you, by email reply",
+      "Sent to your website's agent, signed, with you copied",
+      "The agent replied: “Live. Added to the visit section.”",
+      "Read the site (0 pages): not there yet",
+      "Read the site: it's there (https://felaniam.cloud/visit). Live.",
+    ]);
+    // the request is named on the event itself, not only inside its payload
+    const named = await t.run((ctx) => ctx.db.query("events").withIndex("by_proposal_at", (q) => q.eq("proposalId", pid)).collect());
+    expect(named.map((e) => e.kind)).toContain("site.live");
+    await expect(t.query(api.proposals.timeline, { slug: tenant.slug, key: "nope", proposalId: pid })).rejects.toThrow(/bad surface key/);
+  });
+
+  test("events written before the request was named on them are backfilled from their payload", async () => {
+    const { t, tenant, pid } = await sentRequest("the door code is 4412", "thr_old");
+    await t.run(async (ctx) => {
+      for (const e of await ctx.db.query("events").collect()) await ctx.db.patch(e._id, { proposalId: undefined });
+    });
+    const patched = await t.mutation(internal.events.backfillProposalIds, { paginationOpts: { numItems: 500, cursor: null } });
+    expect(patched).toBeGreaterThanOrEqual(3); // created, proposed, sent
+    const events = await t.run((ctx) => ctx.db.query("events").collect());
+    expect(events.filter((e) => e.proposalId === pid).map((e) => e.kind)).toEqual(expect.arrayContaining(["proposal.created", "site.proposed", "proposal.sent"]));
+    expect(events.find((e) => e.kind === "mail.received" || e.kind === "digest.built")?.proposalId).toBeUndefined();
+    expect(tenant).toBeTruthy();
+  });
+
   test("the command line can resend a failed request too", async () => {
     const { t, tenant, pid } = await sentRequest("we close at 2 on saturdays", "thr_cli");
     await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: WEB, fromName: "Web", threadId: "thr_cli", subject: "Re: Update", text: "Not live. I couldn't place this on the page safely: no edits. Nothing was changed." }) });

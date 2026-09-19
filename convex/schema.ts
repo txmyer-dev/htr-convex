@@ -126,7 +126,9 @@ export default defineSchema({
     editBody: v.optional(v.string()),
     draftBody: v.optional(v.string()), // on an edit: what the draft said before the owner's words replaced it
     at: v.number(),
-  }).index("by_tenant_at", ["tenantId", "at"]),
+  })
+    .index("by_tenant_at", ["tenantId", "at"])
+    .index("by_proposal_at", ["proposalId", "at"]), // the rulings on one request, for its timeline
 
   digests: defineTable({
     tenantId: v.id("tenants"),
@@ -138,10 +140,13 @@ export default defineSchema({
 
   events: defineTable({
     tenantId: v.id("tenants"),
+    proposalId: v.optional(v.id("proposals")), // lifted from the payload when it names one: a request's timeline reads by it
     kind: v.string(),
     payload: v.any(),
     at: v.number(),
-  }).index("by_tenant_at", ["tenantId", "at"]),
+  })
+    .index("by_tenant_at", ["tenantId", "at"])
+    .index("by_proposal_at", ["proposalId", "at"]),
 
   actions: defineTable({
     tenantId: v.id("tenants"),

@@ -8,6 +8,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { appendEvent } from "./events";
 import { canMove, summarize, type Status } from "./lib/proposals/lifecycle";
+import { buildTimeline, type Step } from "./lib/proposals/timeline";
 import { requireSurface } from "./surface";
 
 export type Proposal = Doc<"proposals">;
@@ -180,6 +181,22 @@ export const list = query({
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, subject: p.meta.subject,
       sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null, siteFailure: p.meta.siteFailure ?? null,
     }));
+  },
+});
+
+/**
+ * What happened to one request, in order and in words (lib/proposals/timeline.ts): the events that
+ * name it and the owner's rulings on it. The surface shows it under a ruled item. Live like the list.
+ */
+export const timeline = query({
+  args: { slug: v.string(), key: v.string(), proposalId: v.id("proposals") },
+  handler: async (ctx, { slug, key, proposalId }): Promise<Step[]> => {
+    const tenant = await requireSurface(ctx, slug, key);
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.tenantId !== tenant._id) return [];
+    const events = await ctx.db.query("events").withIndex("by_proposal_at", (q) => q.eq("proposalId", proposalId)).take(100);
+    const rulings = await ctx.db.query("rulings").withIndex("by_proposal_at", (q) => q.eq("proposalId", proposalId)).take(20);
+    return buildTimeline(p, events, rulings);
   },
 });
 

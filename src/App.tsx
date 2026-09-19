@@ -4,7 +4,7 @@
 // waits, what was ruled, what went out. Send, Skip, or type the words you would rather send.
 
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { describeGrounding } from "../convex/lib/knowledge/domain";
@@ -103,20 +103,51 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
           <h2>Ruled</h2>
           <ul>
             {ruled.map((p) => (
-              <li key={p.id}>
-                <span className={`status ${p.status}`}>{p.status}</span> {p.summary}
-                {p.error && <span className="error"> · {p.error}</span>}
+              <Ruled key={p.id} p={p} slug={slug} keyToken={keyToken}>
                 {p.kind === "site" && p.status === "failed" && (
                   <button className="small" onClick={async () => setNote(await retrySite({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>
                     {p.siteFailure === "unseen" ? "Read the site again" : "Ask again"}
                   </button>
                 )}
-              </li>
+              </Ruled>
             ))}
           </ul>
         </section>
       )}
     </main>
+  );
+}
+
+/**
+ * One ruled item, and what happened to it: every step from the draft to the thread or the page,
+ * live. A site request still on its way opens by itself, so the owner watches it land.
+ */
+function Ruled({ p, slug, keyToken, children }: { p: Row; slug: string; keyToken: string; children?: ReactNode }) {
+  const [open, setOpen] = useState(p.kind === "site" && p.status === "sent");
+  return (
+    <li>
+      <span className={`status ${p.status}`}>{p.status}</span> {p.summary}
+      {p.error && <span className="error"> · {p.error}</span>}
+      {children}
+      <button className="small quiet" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Hide" : "What happened"}</button>
+      {open && <Timeline proposalId={p.id as Id<"proposals">} slug={slug} keyToken={keyToken} />}
+    </li>
+  );
+}
+
+function Timeline({ proposalId, slug, keyToken }: { proposalId: Id<"proposals">; slug: string; keyToken: string }) {
+  const steps = useQuery(api.proposals.timeline, { slug, key: keyToken, proposalId });
+  if (steps === undefined) return <p className="muted timeline-note">Loading…</p>;
+  if (steps.length === 0) return <p className="muted timeline-note">Nothing recorded for this one.</p>;
+  return (
+    <ol className="timeline">
+      {steps.map((s, i) => (
+        <li key={i} className={s.tone}>
+          <span className="when">{s.at ? clock(s.at) : "now"}</span>
+          <span>{s.text}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
