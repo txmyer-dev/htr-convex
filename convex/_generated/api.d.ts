@@ -30,6 +30,7 @@ import type * as lib_mail_agentmail from "../lib/mail/agentmail.js";
 import type * as lib_mail_inbound from "../lib/mail/inbound.js";
 import type * as lib_mail_svix from "../lib/mail/svix.js";
 import type * as lib_proposals_lifecycle from "../lib/proposals/lifecycle.js";
+import type * as lib_proposals_timeline from "../lib/proposals/timeline.js";
 import type * as lib_reader_automated from "../lib/reader/automated.js";
 import type * as lib_reader_deadline from "../lib/reader/deadline.js";
 import type * as lib_reader_waiting from "../lib/reader/waiting.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mail/inbound": typeof lib_mail_inbound;
   "lib/mail/svix": typeof lib_mail_svix;
   "lib/proposals/lifecycle": typeof lib_proposals_lifecycle;
+  "lib/proposals/timeline": typeof lib_proposals_timeline;
   "lib/reader/automated": typeof lib_reader_automated;
   "lib/reader/deadline": typeof lib_reader_deadline;
   "lib/reader/waiting": typeof lib_reader_waiting;
