@@ -54,22 +54,35 @@ function FrontDoor() {
     <main className="shell front">
       <header>
         <h1>Hold the Room</h1>
-        <p className="lede">An assistant that reads everything, drafts everything, and sends nothing until you rule.</p>
+        <p className="lede">An email assistant that reads every message, writes every reply in your voice, and sends nothing without your say-so.</p>
       </header>
       <ol className="how">
-        <li><strong>Take an inbox.</strong> Give the form below a name and your email. You get an address and a live page.</li>
-        <li><strong>Get an email.</strong> Send one to the address from any account, or use the customer button on the page. A draft in your voice appears on the page in seconds, with the quote it rests on. A minute later a numbered digest lands in your own inbox.</li>
-        <li><strong>Rule.</strong> Tap Send on the page, or reply to the digest with <code>1</code>, <code>1 no</code>, or <code>1 tell them Tuesday works</code>. What you sign goes out as you, in their thread. What you edit teaches the drafter. Nothing goes out otherwise.</li>
+        <li><strong>Take an inbox.</strong> Enter your name, email, and business below. You get a real email address and a live page — in seconds.</li>
+        <li><strong>A customer writes in.</strong> Email that address from any account, or tap the customer button on your page. The assistant reads their message and your website, then drafts a reply in your voice that quotes what they actually asked. It lands on your page in seconds; a numbered summary reaches your own inbox a minute later.</li>
+        <li><strong>You decide.</strong> Tap <em>Send</em>, <em>Edit</em>, or <em>Skip</em> on the page — or reply to the summary with <code>1</code>, <code>1 no</code>, or <code>1 tell them Tuesday works</code>. What you approve goes out as you, in the customer's own thread. What you edit, it learns from. Nothing sends until you say so.</li>
       </ol>
       <form className="form" onSubmit={submit}>
         <label>Your name<input required value={form.ownerName} onChange={set("ownerName")} placeholder="Sam" /></label>
-        <label>Your email<input required type="email" value={form.ownerEmail} onChange={set("ownerEmail")} placeholder="you@example.com" /><span className="hint">Digests come here. Replies from this address are rulings.</span></label>
+        <label>Your email<input required type="email" value={form.ownerEmail} onChange={set("ownerEmail")} placeholder="you@example.com" /><span className="hint">Your summaries come here, and a reply from this address is how you decide.</span></label>
         <label>Your business<input required value={form.businessName} onChange={set("businessName")} placeholder="Sam's Bakery" /></label>
         <label><span>Its website <span className="muted">(optional)</span></span><input value={form.site} onChange={set("site")} placeholder="sams-bakery.com" /><span className="hint">Firecrawl reads it so drafts quote your real hours and prices.</span></label>
         {note && <p className="note" onClick={() => setNote(null)}>{note}</p>}
         <button className="primary" disabled={busy} type="submit">{busy ? "Taking an inbox…" : "Take an inbox"}</button>
         <p className="hint">A demo lasts thirty minutes and is then forgotten. Your email address is used for the digests and nothing else.</p>
       </form>
+      <footer className="engine">
+        <h2>What runs it</h2>
+        <p>
+          <strong>One Convex deployment is the entire system</strong> — the inbox's queue, each ruling as a single
+          transaction, and this page itself as a live query that re-renders the instant anything changes. No separate
+          server, no websocket to wire up, and the page you're reading is served by that same deployment.
+        </p>
+        <p>
+          <strong>AgentMail</strong> is the real inbox on the other side: it receives the customer's mail through a
+          signed webhook and sends your approved reply back in their thread, as you. <strong>Firecrawl</strong> reads
+          your website first, so the draft can quote your real hours and prices instead of guessing.
+        </p>
+      </footer>
     </main>
   );
 }

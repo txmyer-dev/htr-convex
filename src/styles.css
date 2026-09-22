@@ -47,6 +47,12 @@ code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; ba
 .hint { font-weight: 400; font-size: 0.9rem; color: var(--muted); }
 .form .primary { justify-self: start; }
 
+/* what runs it */
+.engine { margin-top: 2.5rem; padding-top: 1.4rem; border-top: 1px solid var(--line); }
+.engine h2 { margin-top: 0; }
+.engine p { font-size: 0.95rem; color: var(--muted); margin: 0.6rem 0; }
+.engine strong { color: var(--ink); font-weight: 600; }
+
 /* the demo banner */
 .banner { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 0.9rem 0 1.4rem; }
 .banner p { margin: 0.3rem 0; }
