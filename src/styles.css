@@ -39,8 +39,13 @@ button:disabled { opacity: 0.5; cursor: default; }
 /* the front door */
 .front .lede { font-size: 1.15rem; font-weight: 600; margin: 0 0 1rem; }
 .front .explain { margin: 0 0 1rem; }
-.how { padding-left: 1.2rem; margin: 0.5rem 0 2rem; }
-.how li { margin: 0.7rem 0; }
+
+/* one step, one page: a numbered instruction for what you do here */
+.step { margin: 0 0 1.25rem; }
+.step p { margin: 0.25rem 0; }
+.step-head { font-weight: 600; margin: 0 0 0.35rem; }
+.step-n { display: inline-block; min-width: 1.5rem; height: 1.5rem; line-height: 1.5rem; text-align: center; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 0.85rem; font-weight: 600; margin-right: 0.5rem; }
+.surface-step { margin-top: 1.4rem; }
 code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; }
 .form { display: grid; gap: 0.9rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.2rem; margin: 0.9rem 0; }
 .form label { display: grid; gap: 0.3rem; font-weight: 600; }

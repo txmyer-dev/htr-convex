@@ -63,27 +63,15 @@ function FrontDoor() {
         Approved replies go out as you, in the customer's own thread. The assistant does the reading and
         the writing — you keep the last word.
       </p>
-      <p className="explain">Try it below as if the business were yours. It takes about a minute:</p>
-      <ol className="how">
-        <li>
-          <strong>Set yourself up as the owner.</strong> Enter your name, your business, and your email.
-          Your email is where the assistant reaches <em>you</em> — it sends every draft there for you to
-          approve, and your reply is how you approve it. Add your website and the drafts will quote your
-          real hours and prices.
-        </li>
-        <li>
-          <strong>A customer writes in.</strong> Setting up hands you a fresh inbox — the address the
-          assistant watches on your behalf. On the next page you can email that inbox from any other
-          account to play the customer, or just tap a button to send a sample message. Within seconds, a
-          draft reply in your voice appears on your live page.
-        </li>
-        <li>
-          <strong>You have the final say.</strong> Read the draft and tap <em>Send</em>, <em>Edit</em>, or <em>Skip</em>
-          {" "}— or reply to the summary email with <code>1</code>, <code>1 no</code>, or
-          <code>1 tell them Tuesday works</code>. What you approve goes out as you; what you edit, the
-          assistant learns from for next time. Until you say so, nothing is sent.
-        </li>
-      </ol>
+      <p className="explain">Try it as if the business were yours. It takes about a minute — start here, and the next steps appear as you go.</p>
+      <div className="step">
+        <p className="step-head"><span className="step-n">1</span> Set yourself up as the owner</p>
+        <p>
+          Enter your name, your business, and your email below. Your email is where the assistant reaches
+          <em> you</em> — it sends every draft there for you to approve, and your reply is how you approve
+          it. Add your website and the drafts will quote your real hours and prices.
+        </p>
+      </div>
       <form className="form" onSubmit={submit}>
         <label>Your name<input required value={form.ownerName} onChange={set("ownerName")} placeholder="Sam" /></label>
         <label>Your email<input required type="email" value={form.ownerEmail} onChange={set("ownerEmail")} placeholder="you@example.com" /><span className="hint">This is you, the owner. The assistant sends every draft here for you to approve; a reply from this address approves it.</span></label>
@@ -118,6 +106,16 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
         {note && <p className="note" onClick={() => setNote(null)}>{note}</p>}
       </header>
       {tenant.demo && <DemoBanner slug={slug} keyToken={keyToken} tenant={tenant} onNote={setNote} quiet={pending.length > 0 || ruled.length > 0} />}
+      {pending.length > 0 && (
+        <div className="step surface-step">
+          <p className="step-head">{tenant.demo ? <span className="step-n">3</span> : null}You have the final say</p>
+          <p className="muted">
+            Read each draft below and tap <em>Send</em>, <em>Edit</em>, or <em>Skip</em> — or reply to the
+            summary email with <code>1</code>, <code>1 no</code>, or <code>1 tell them Tuesday works</code>.
+            What you approve goes out as you, in the customer's own thread; until you say so, nothing is sent.
+          </p>
+        </div>
+      )}
       <section>
         {pending.map((p) => <Card key={p.id} p={p} slug={slug} keyToken={keyToken} onNote={setNote} />)}
       </section>
@@ -208,6 +206,7 @@ function DemoBanner({ slug, keyToken, tenant, onNote, quiet }: { slug: string; k
   };
   return (
     <section className="banner">
+      <p className="step-head"><span className="step-n">2</span> A customer writes in</p>
       <p>
         <strong>The inbox the assistant is watching for you:</strong> <code className="addr">{tenant.inbox}</code>
         <button className="small" onClick={() => navigator.clipboard?.writeText(tenant.inbox ?? "")}>Copy</button>
