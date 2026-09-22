@@ -25,7 +25,7 @@ export const TENANTS: Install[] = [
       autonomyTier: 0,
     },
     business: {
-      site: "https://felaniam.cloud",
+      site: "https://felaniam.cloud/demo.html", // sandbox copy the web agent edits; real homepage untouched
       bookingLink: "https://calendar.app.google/PzY2EQVcyDDQ2GY9A",
       agentName: "Ekko",
       // The agent that edits felaniam.cloud (its own AgentMail inbox, on the VPS). With it set, a
