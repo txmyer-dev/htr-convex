@@ -78,6 +78,12 @@ function FrontDoor() {
         <label>Your business<input required value={form.businessName} onChange={set("businessName")} placeholder="Sam's Bakery" /></label>
         <label><span>Its website <span className="muted">(optional)</span></span><input value={form.site} onChange={set("site")} placeholder="sams-bakery.com" /><span className="hint">Firecrawl reads it so drafts quote your real hours and prices.</span></label>
         {note && <p className="note" onClick={() => setNote(null)}>{note}</p>}
+        <p className="tip">
+          <strong>No website handy?</strong> Use <code>felaniam.cloud</code> and the drafts will quote its real
+          content. And that's the site the assistant edits on its own: teaching it something new can update a
+          website, published by a second agent — a feature shown in the demo video, running on our connected site
+          rather than a thirty-minute trial.
+        </p>
         <button className="primary" disabled={busy} type="submit">{busy ? "Taking an inbox…" : "Take an inbox"}</button>
         <p className="hint">A demo lasts thirty minutes and is then forgotten. Your email address is used for the drafts to approve and nothing else.</p>
       </form>

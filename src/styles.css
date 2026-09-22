@@ -52,6 +52,8 @@ code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; ba
 .form input, .form textarea { font: inherit; font-weight: 400; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.7rem; margin: 0; }
 .hint { font-weight: 400; font-size: 0.9rem; color: var(--muted); }
 .form .primary { justify-self: start; }
+.tip { font-weight: 400; font-size: 0.9rem; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; margin: 0; }
+.tip strong { color: var(--ink); }
 
 /* the demo banner */
 .banner { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 0.9rem 0 1.4rem; }
