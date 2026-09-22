@@ -1,18 +1,46 @@
-# Hackathon log
+# Hold the Room — Convex All Gas Hackathon
 
-- **Project:** Hold the Room
-- **Event:** Convex All Gas Hackathon
-- **What it does:** An email assistant that reads everything, drafts every reply in the owner's voice with quotes from the counterparty, and sends nothing until the owner rules by reply, signed link, or a live page. What the owner teaches it that the website does not say, it asks a second agent to put on the site, signed, and reads the site to check.
-- **Live app:** https://famous-spider-906.convex.site
-- **Repo:** private
-- **Frontend:** Convex static hosting
-- **Convex deployment:** https://famous-spider-906.convex.cloud
-- **Components:** @convex-dev/static-hosting
-- **Convex features:** schema, tables, indexes, queries, mutations, actions, HTTP actions, crons, scheduled functions, realtime queries
-- **Auth:** none (no accounts by design: the owner's email address is the identity for rulings by reply; Send / Skip links and the surface URL are HMAC-signed per tenant)
-- **AI models:** gpt-5.4-mini
-- **Started:** 2026-09-04T04:42:55Z
-- **Last updated:** 2026-09-08T00:10:00Z
+**An everyday app, not a dev tool.** For anyone who runs on their inbox — a bakery, a clinic front
+desk, a contractor, a small law office. It reads every customer message, drafts the reply in the
+owner's voice quoting what the customer actually asked, and **sends nothing until the owner
+approves**: one tap on a live page, or a one-word email reply (`1`, `2 no`, `3 tell them Tuesday
+works`). What the owner teaches it that the website does not say, a second agent puts on the site,
+signed, and it re-reads the site to confirm. The user is a business owner answering customers —
+never a developer.
+
+- **Live URL:** https://famous-spider-906.convex.site — the front door itself. Take an inbox, send
+  a customer email, watch a draft appear, and rule it. No login, no localhost.
+- **Demo video (< 3 min):** ⟵ ADD LINK
+- **Social post (X / LinkedIn):** ⟵ ADD LINK
+- **Repo (public):** https://github.com/txmyer-dev/htr-convex · the second agent:
+  https://github.com/txmyer-dev/htr-web-agent · the site it edits: https://github.com/txmyer-dev/felaniam-site
+- **Started:** 2026-09-04 · **Last updated:** 2026-09-22 · **129 tests, offline**
+
+## The stack, and the real work each sponsor does
+
+- **Convex — the entire system is one deployment.** The database *is* the queue; every ruling is a
+  single transaction; the owner's live page is a Convex query that re-renders the instant state
+  changes — no server, no websocket. In use: **schema + indexes**, **queries**, **mutations**,
+  **actions**, **HTTP actions** (the AgentMail webhooks and the server-rendered ruling pages),
+  **scheduled functions + crons** (digest clock, hourly expiry, 15-minute demo sweep, weekly site
+  re-read), **vector search** (site chunks retrieved per message), and the
+  **@convex-dev/static-hosting component**, which serves this very page from the same deployment.
+  **Auth:** no accounts by design — the owner's email address is the identity for rulings by reply;
+  every Send / Skip link and the surface URL is HMAC-signed per tenant.
+- **OpenAI — generates.** `gpt-5.4-mini` writes every draft as `{reply, basis-quotes}` and distills
+  what the owner teaches into a fact; `text-embedding-3-small` embeds the site and the incoming
+  message for retrieval. Not decoration: no model call, no draft.
+- **Firecrawl — crawls.** Reads the business site (crawled, then weekly), the sender's own domain on
+  first contact, and any page a customer's message links to; the draft rests on what the site
+  actually says, and Firecrawl re-reads the site to confirm a taught fact went live.
+- **AgentMail — sends and receives.** The real inbox on both sides: inbound customer mail through a
+  Svix-signed webhook, the owner's approved reply back in the customer's own thread as the owner,
+  and a leased inbox pool so any judge can try the whole loop live from the front door.
+
+**Convex features:** schema, indexes, queries, mutations, actions, HTTP actions, crons, scheduled
+functions, realtime queries, vector search, `@convex-dev/static-hosting`.
+**Convex deployment:** https://famous-spider-906.convex.cloud (surface served from
+https://famous-spider-906.convex.site).
 
 ## Log
 
@@ -274,3 +302,23 @@ repo with the agent's first edit in it. Deployed to the web agent and to the dep
 (`convex/lib/site/publish.ts`, `convex/lib/proposals/lifecycle.ts`, `convex/facts.ts`,
 `convex/proposals.ts`, `convex/schema.ts`, `src/App.tsx`, `tests/publish.test.ts`,
 `tests/lifecycle.test.ts`, `tests/loop.test.ts`; `~/dev/htr-web-agent/{server.mjs,test.mjs}`).
+
+### 2026-09-19 - the whole story on the surface, and a secret that can't be borrowed
+Two hardening passes on top of the loop. **"What happened":** every ruled item on the surface now
+carries its story in order — draft, ruling, sent to the thread or the agent, the agent's reply, each
+Firecrawl re-read — merged from the events and rulings already recorded, by one pure function
+(`lib/proposals/timeline.ts`); a site request still on its way opens itself so the owner watches it
+land. Nothing new is written to tell it. **The site secret is its own:** `HTR_SITE_SECRET` no longer
+falls back to `HTR_RULING_SECRET` and may not equal it — the web agent on the VPS holds a copy of the
+site secret, while the ruling secret signs every Send / Skip link and derives every surface key, so a
+fallback would have handed an agent that edits one website the power to rule the room. Missing now
+throws: no site request goes out, the safe failure. The demo pool moved to AgentMail's Developer plan
+(8 inboxes, `demo:warm` pre-fills it). 129 tests (`convex/events.ts`, `convex/proposals.ts`,
+`convex/surface.ts`, `convex/schema.ts`, `src/App.tsx`, `tests/timeline.test.ts`,
+`tests/secrets.test.ts`, `tests/loop.test.ts`).
+
+### 2026-09-22 - submission
+Repo made public; the front door's copy rewritten in a business owner's words with a "What runs it"
+footer that names Convex, AgentMail, and Firecrawl and what each carries; this log aligned to the
+judging criteria. Live, 129 tests green. Remaining: the demo video and the social post, linked at the
+top.

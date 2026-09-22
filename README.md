@@ -1,6 +1,7 @@
 # Hold the Room, on Convex
 
-An assistant that reads everything, drafts everything, and sends nothing until you rule.
+An email assistant for people who run on their inbox: it reads every message, drafts every reply in
+your voice, and sends nothing until you approve.
 
 An email arrives at the assistant's inbox. The reader decides it waits on you. The drafter
 writes a reply in your voice, resting on quotes from what they actually said. You get one
@@ -8,6 +9,23 @@ numbered email, or a live page, and you rule: `1`, `2 no`, `3 tell them Tuesday 
 tap on Send. What you signed goes out as you, in their thread. What you edited is logged in your
 own words. Nothing goes out otherwise. A draft you never rule on expires: the counterparty is
 told a reply is coming, and the item heads the next digest.
+
+**Live:** [famous-spider-906.convex.site](https://famous-spider-906.convex.site) — the front door
+itself; take an inbox and run the whole loop in thirty seconds. **Who it's for:** a bakery, a clinic
+front desk, a contractor, a small law office — anyone who lives in their inbox, no developer required.
+**The stack, and the real work each piece does:**
+
+- **Convex** is the entire system in one deployment: the database *is* the queue, every ruling is a
+  single transaction, and the live owner page is a query that re-renders on every change — no server,
+  no websocket. Schema, indexes, queries, mutations, actions, HTTP actions, crons and scheduled
+  functions, **vector search** (site retrieval), and the **static-hosting component** serving this
+  page. No accounts by design: the owner's email is the identity, and every link is HMAC-signed.
+- **OpenAI generates** — `gpt-5.4-mini` writes every draft as `{reply, basis-quotes}` and distills
+  facts; `text-embedding-3-small` embeds the site and the message. No call, no draft.
+- **Firecrawl crawls** — the business site, the sender's own domain on first contact, and any page a
+  message links to; it also re-reads the site to confirm a taught fact went live.
+- **AgentMail sends and receives** — inbound mail through a signed webhook, the approved reply back
+  in the customer's thread as you, and a leased inbox pool so anyone can try it live.
 
 This is the Convex rebuild of [HTR](https://github.com/txmyer-dev/HTR) (Python, SMS, live on a
 VPS) for the Convex "All Gas" hackathon. Same loop, new spine: the database is the queue, every
