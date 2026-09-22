@@ -10,7 +10,7 @@ never a developer.
 
 - **Live URL:** https://famous-spider-906.convex.site — the front door itself. Take an inbox, send
   a customer email, watch a draft appear, and rule it. No login, no localhost.
-- **Demo video (< 3 min):** ⟵ ADD LINK
+- **Demo video (< 3 min):** https://youtu.be/6GhkyDQ3Z_k
 - **Social post (X / LinkedIn):** ⟵ ADD LINK
 - **Repo (public):** https://github.com/txmyer-dev/htr-convex · the second agent:
   https://github.com/txmyer-dev/htr-web-agent · the site it edits: https://github.com/txmyer-dev/felaniam-site
