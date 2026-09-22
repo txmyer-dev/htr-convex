@@ -37,21 +37,16 @@ button:disabled { opacity: 0.5; cursor: default; }
 .status.failed, .error { color: #b3261e; }
 
 /* the front door */
-.front .lede { font-size: 1.1rem; margin: 0 0 1.5rem; }
-.how { padding-left: 1.2rem; margin: 0 0 2rem; }
-.how li { margin: 0.5rem 0; }
+.front .lede { font-size: 1.15rem; font-weight: 600; margin: 0 0 1rem; }
+.front .explain { margin: 0 0 1rem; }
+.how { padding-left: 1.2rem; margin: 0.5rem 0 2rem; }
+.how li { margin: 0.7rem 0; }
 code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; }
 .form { display: grid; gap: 0.9rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.2rem; margin: 0.9rem 0; }
 .form label { display: grid; gap: 0.3rem; font-weight: 600; }
 .form input, .form textarea { font: inherit; font-weight: 400; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.7rem; margin: 0; }
 .hint { font-weight: 400; font-size: 0.9rem; color: var(--muted); }
 .form .primary { justify-self: start; }
-
-/* what runs it */
-.engine { margin-top: 2.5rem; padding-top: 1.4rem; border-top: 1px solid var(--line); }
-.engine h2 { margin-top: 0; }
-.engine p { font-size: 0.95rem; color: var(--muted); margin: 0.6rem 0; }
-.engine strong { color: var(--ink); font-weight: 600; }
 
 /* the demo banner */
 .banner { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 0.9rem 0 1.4rem; }

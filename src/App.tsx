@@ -54,35 +54,45 @@ function FrontDoor() {
     <main className="shell front">
       <header>
         <h1>Hold the Room</h1>
-        <p className="lede">An email assistant that reads every message, writes every reply in your voice, and sends nothing without your say-so.</p>
+        <p className="lede">Your customer email, answered for you — but never behind your back.</p>
       </header>
+      <p className="explain">
+        Hold the Room is an assistant that watches an inbox for you. Whenever a customer writes, it
+        reads their message and drafts the reply in your own voice, quoting what they actually asked.
+        It never sends on its own: you see every draft and <strong>approve it, edit it, or skip it</strong>.
+        Approved replies go out as you, in the customer's own thread. The assistant does the reading and
+        the writing — you keep the last word.
+      </p>
+      <p className="explain">Try it below as if the business were yours. It takes about a minute:</p>
       <ol className="how">
-        <li><strong>Take an inbox.</strong> Enter your name, email, and business below. You get a real email address and a live page — in seconds.</li>
-        <li><strong>A customer writes in.</strong> Email that address from any account, or tap the customer button on your page. The assistant reads their message and your website, then drafts a reply in your voice that quotes what they actually asked. It lands on your page in seconds; a numbered summary reaches your own inbox a minute later.</li>
-        <li><strong>You decide.</strong> Tap <em>Send</em>, <em>Edit</em>, or <em>Skip</em> on the page — or reply to the summary with <code>1</code>, <code>1 no</code>, or <code>1 tell them Tuesday works</code>. What you approve goes out as you, in the customer's own thread. What you edit, it learns from. Nothing sends until you say so.</li>
+        <li>
+          <strong>Set yourself up as the owner.</strong> Enter your name, your business, and your email.
+          Your email is where the assistant reaches <em>you</em> — it sends every draft there for you to
+          approve, and your reply is how you approve it. Add your website and the drafts will quote your
+          real hours and prices.
+        </li>
+        <li>
+          <strong>A customer writes in.</strong> Setting up hands you a fresh inbox — the address the
+          assistant watches on your behalf. On the next page you can email that inbox from any other
+          account to play the customer, or just tap a button to send a sample message. Within seconds, a
+          draft reply in your voice appears on your live page.
+        </li>
+        <li>
+          <strong>You have the final say.</strong> Read the draft and tap <em>Send</em>, <em>Edit</em>, or <em>Skip</em>
+          {" "}— or reply to the summary email with <code>1</code>, <code>1 no</code>, or
+          <code>1 tell them Tuesday works</code>. What you approve goes out as you; what you edit, the
+          assistant learns from for next time. Until you say so, nothing is sent.
+        </li>
       </ol>
       <form className="form" onSubmit={submit}>
         <label>Your name<input required value={form.ownerName} onChange={set("ownerName")} placeholder="Sam" /></label>
-        <label>Your email<input required type="email" value={form.ownerEmail} onChange={set("ownerEmail")} placeholder="you@example.com" /><span className="hint">Your summaries come here, and a reply from this address is how you decide.</span></label>
+        <label>Your email<input required type="email" value={form.ownerEmail} onChange={set("ownerEmail")} placeholder="you@example.com" /><span className="hint">This is you, the owner. The assistant sends every draft here for you to approve; a reply from this address approves it.</span></label>
         <label>Your business<input required value={form.businessName} onChange={set("businessName")} placeholder="Sam's Bakery" /></label>
         <label><span>Its website <span className="muted">(optional)</span></span><input value={form.site} onChange={set("site")} placeholder="sams-bakery.com" /><span className="hint">Firecrawl reads it so drafts quote your real hours and prices.</span></label>
         {note && <p className="note" onClick={() => setNote(null)}>{note}</p>}
         <button className="primary" disabled={busy} type="submit">{busy ? "Taking an inbox…" : "Take an inbox"}</button>
-        <p className="hint">A demo lasts thirty minutes and is then forgotten. Your email address is used for the digests and nothing else.</p>
+        <p className="hint">A demo lasts thirty minutes and is then forgotten. Your email address is used for the drafts to approve and nothing else.</p>
       </form>
-      <footer className="engine">
-        <h2>What runs it</h2>
-        <p>
-          <strong>One Convex deployment is the entire system</strong> — the inbox's queue, each ruling as a single
-          transaction, and this page itself as a live query that re-renders the instant anything changes. No separate
-          server, no websocket to wire up, and the page you're reading is served by that same deployment.
-        </p>
-        <p>
-          <strong>AgentMail</strong> is the real inbox on the other side: it receives the customer's mail through a
-          signed webhook and sends your approved reply back in their thread, as you. <strong>Firecrawl</strong> reads
-          your website first, so the draft can quote your real hours and prices instead of guessing.
-        </p>
-      </footer>
     </main>
   );
 }
@@ -199,12 +209,15 @@ function DemoBanner({ slug, keyToken, tenant, onNote, quiet }: { slug: string; k
   return (
     <section className="banner">
       <p>
-        <strong>Your inbox:</strong> <code className="addr">{tenant.inbox}</code>
+        <strong>The inbox the assistant is watching for you:</strong> <code className="addr">{tenant.inbox}</code>
         <button className="small" onClick={() => navigator.clipboard?.writeText(tenant.inbox ?? "")}>Copy</button>
       </p>
       <p className="muted">
-        Email it from any address other than {tenant.ownerEmail}. Digests go to {tenant.ownerEmail}; a reply from there rules.
-        {tenant.site ? ` Drafts rest on what ${host(tenant.site)} says.` : ""} This demo ends at {clock(demo.expiresAt)}.
+        To see it work, play the part of a customer — two ways: <strong>email this inbox</strong> from any
+        account other than {tenant.ownerEmail}, or <strong>tap “Send a customer email”</strong> below to send a
+        sample message. Either way, a draft reply appears on this page within seconds. Your summary of what's
+        waiting goes to {tenant.ownerEmail}, and a reply from there approves it — just as it would for real.
+        {tenant.site ? ` Drafts quote what ${host(tenant.site)} says.` : ""} This demo ends at {clock(demo.expiresAt)}.
       </p>
       {open ? (
         <form className="form" onSubmit={submit}>
