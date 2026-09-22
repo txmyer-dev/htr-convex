@@ -57,7 +57,7 @@ tests; scheduled actions are visible, never run.
 
 ```bash
 npm install
-npm test                      # 126 tests, offline
+npm test                      # 129 tests, offline
 npx convex dev                # first time: creates the deployment, writes .env.local
 ```
 
