@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Hold the Room: the inbox that drafts every reply in your voice and sends nothing until you rule.">
+<title>Hold the Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@1,500;1,600;1,700;1,800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<style>
+  :root{
+    --obsidian: #0D0D12;
+    --obsidian-2: #17171f;
+    --obsidian-line: #2a2a35;
+    --champagne: #C9A84C;
+    --champagne-bright: #e0c574;
+    --ivory: #FAF8F5;
+    --ivory-2: #f1eee6;
+    --slate: #2A2A35;
+    --slate-soft: #62616f;
+  }
+  *{ box-sizing: border-box; }
+  html{ scroll-behavior: smooth; }
+  body{
+    background: var(--ivory);
+    color: var(--slate);
+    font-family: "Inter", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  h1,h2,h3{ text-wrap: balance; margin: 0; }
+  p{ margin: 0; }
+  a{ color: inherit; text-decoration: none; }
+  .drama{ font-family: "Playfair Display", Georgia, serif; font-style: italic; }
+  .mono{ font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .tight{ letter-spacing: -0.02em; }
+  ::selection{ background: var(--champagne); color: var(--obsidian); }
+
+  /* ---- noise overlay -------------------------------------------------- */
+  .noise-overlay{
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    opacity: 0.05; mix-blend-mode: overlay; background: #808080;
+    filter: url(#roomGrain);
+  }
+
+  /* ---- magnetic buttons ------------------------------------------------- */
+  .btn{
+    position: relative;
+    display: inline-flex; align-items: center; gap: 0.6em;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem; letter-spacing: 0.02em;
+    padding: 0.95em 1.7em;
+    border-radius: 999px;
+    overflow: hidden;
+    cursor: pointer; text-decoration: none;
+    transition: transform 0.4s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  .btn:hover{ transform: scale(1.03); }
+  .btn:focus-visible{ outline: 2px solid var(--champagne); outline-offset: 3px; }
+  .btn .fill{
+    position: absolute; inset: 0; z-index: 0;
+    transform: translateY(101%);
+    transition: transform 0.45s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  .btn:hover .fill{ transform: translateY(0); }
+  .btn .label{ position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 0.6em; }
+  .btn.champagne{ background: var(--champagne); color: var(--obsidian); font-weight: 600; }
+  .btn.champagne .fill{ background: var(--obsidian); }
+  .btn.champagne:hover .label{ color: var(--champagne); }
+  a.lift{ transition: transform 0.2s ease; display: inline-block; }
+  a.lift:hover{ transform: translateY(-1px); }
+
+  /* ---- navbar ------------------------------------------------------------ */
+  #navbar{
+    position: fixed; top: 1.1rem; left: 50%; transform: translateX(-50%);
+    z-index: 200; width: min(94%, 880px);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.7rem 0.7rem 0.7rem 1.4rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ivory);
+    transition: background-color 0.5s ease, border-color 0.5s ease, color 0.5s ease, box-shadow 0.5s ease;
+  }
+  #navbar.scrolled{
+    background: rgba(250,248,245,0.65);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-color: rgba(42,42,53,0.08);
+    color: var(--slate);
+    box-shadow: 0 10px 30px -18px rgba(13,13,18,0.35);
+  }
+  #navbar .navlinks a{ opacity: 0.8; }
+  #navbar .navlinks a:hover{ opacity: 1; }
+  #navbar .logo-mark{ color: var(--champagne); }
+
+  /* ---- hero --------------------------------------------------------------- */
+  #hero{
+    position: relative;
+    height: 100dvh;
+    min-height: 640px;
+    display: flex;
+    align-items: flex-end;
+    background: var(--obsidian);
+    overflow: hidden;
+    border-radius: 0 0 2.5rem 2.5rem;
+  }
+  #hero .field{
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(60% 55% at 18% 8%, rgba(201,168,76,0.16), transparent 60%),
+      radial-gradient(80% 70% at 85% 100%, rgba(201,168,76,0.10), transparent 55%),
+      linear-gradient(180deg, #0D0D12 0%, #101018 55%, #06060a 100%);
+  }
+  #hero svg.veins{ position:absolute; inset:0; width:100%; height:100%; opacity:0.35; }
+  #hero .grad-floor{
+    position:absolute; left:0; right:0; bottom:0; height:60%;
+    background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.55) 100%);
+  }
+  #hero .content{ position: relative; z-index: 2; padding: 0 6vw 9vh; max-width: 780px; }
+  #hero .kicker{
+    color: var(--champagne-bright);
+    font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 0.7em; margin-bottom: 1.6rem;
+  }
+  #hero .kicker .dot{ width:6px; height:6px; border-radius:50%; background: var(--champagne); box-shadow: 0 0 12px var(--champagne); }
+  #hero h1{
+    color: var(--ivory);
+    font-weight: 700;
+    font-size: clamp(2.6rem, 6vw, 4.6rem);
+    line-height: 1.02;
+  }
+  #hero h1 .drama{ display:block; color: var(--champagne-bright); font-weight: 600; font-size: 1.25em; line-height: 1; margin-top: 0.08em; }
+  #hero .lede{ color: rgba(250,248,245,0.72); font-size: 1.08rem; max-width: 46ch; margin-top: 1.6rem; line-height: 1.6; }
+  #hero .cta-row{ margin-top: 2.3rem; display:flex; align-items:center; gap: 1.3rem; flex-wrap: wrap; }
+  #hero .cta-row .fine{ color: rgba(250,248,245,0.45); font-size: 0.78rem; font-family:"JetBrains Mono",monospace; }
+
+  /* ---- section shells ------------------------------------------------------ */
+  .eyebrow{
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--champagne-bright);
+    display:inline-flex; align-items:center; gap:0.7em;
+  }
+  .eyebrow::before{ content:""; width:1.5em; height:1px; background: currentColor; }
+  .eyebrow.on-light{ color: #6e5318; }
+
+  /* ---- features ------------------------------------------------------------- */
+  #features{ padding: clamp(5rem,10vw,8rem) 6vw; }
+  .feat-grid{ display:grid; grid-template-columns: repeat(3,1fr); gap: 1.75rem; margin-top: 3rem; }
+  .feat-card{
+    background: var(--ivory-2); border: 1px solid rgba(42,42,53,0.10);
+    border-radius: 2rem; padding: 2rem 1.85rem;
+    box-shadow: 0 30px 60px -40px rgba(13,13,18,0.25);
+    display:flex; flex-direction:column; gap: 1.1rem;
+    min-height: 380px;
+  }
+  .feat-card h3{ font-size: 1.2rem; font-weight: 700; }
+  .feat-card p.desc{ color: var(--slate-soft); font-size: 0.92rem; line-height: 1.55; }
+  .feat-stage{
+    height: 150px; border-radius: 1.2rem; background: var(--obsidian);
+    position: relative; overflow: hidden; flex-shrink: 0;
+  }
+
+  /* shuffler */
+  .shuf-card{
+    position:absolute; left: 10%; right: 10%; top: 50%;
+    padding: 0.7rem 1rem; border-radius: 0.85rem;
+    background: var(--obsidian-2); border: 1px solid var(--obsidian-line);
+    font-family:"JetBrains Mono",monospace; font-size: 0.78rem; color: var(--ivory);
+    transition: transform 0.6s cubic-bezier(0.34,1.56,0.64,1), opacity 0.6s ease, filter 0.6s ease;
+  }
+  .shuf-card[data-pos="0"]{ transform: translateY(-58%) scale(1); opacity:1; z-index:3; filter: blur(0); border-color: var(--champagne); }
+  .shuf-card[data-pos="1"]{ transform: translateY(-30%) scale(0.94); opacity:0.55; z-index:2; filter: blur(0.3px); }
+  .shuf-card[data-pos="2"]{ transform: translateY(-4%) scale(0.88); opacity:0.28; z-index:1; filter: blur(0.6px); }
+
+  /* typewriter */
+  .tele-head{ position:absolute; top:0.9rem; left:1rem; right:1rem; display:flex; align-items:center; gap:0.5em; font-family:"JetBrains Mono",monospace; font-size:0.66rem; letter-spacing:0.1em; text-transform:uppercase; color: rgba(250,248,245,0.5); }
+  .tele-head .pulse{ width:6px; height:6px; border-radius:50%; background:#7ee787; animation: pulse-dot 1.6s ease-in-out infinite; }
+  @keyframes pulse-dot{ 0%,100%{ opacity:1; } 50%{ opacity:0.3; } }
+  .tele-body{ position:absolute; left:1rem; right:1rem; top: 2.5rem; font-family:"JetBrains Mono",monospace; font-size:0.92rem; color: var(--champagne-bright); }
+  .tele-body .caret{ display:inline-block; width:0.5em; background: var(--champagne); animation: caret-blink 0.9s steps(1) infinite; }
+  @keyframes caret-blink{ 50%{ opacity:0; } }
+
+  /* scheduler */
+  .sched-wrap{ position:absolute; inset: 0; padding: 1rem 1rem 0.85rem; display:flex; flex-direction:column; justify-content:space-between; }
+  .sched-grid{ display:flex; justify-content:space-between; }
+  .sched-day{
+    width: 26px; height: 26px; border-radius: 50%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"JetBrains Mono",monospace; font-size:0.68rem;
+    color: rgba(250,248,245,0.55); border: 1px solid var(--obsidian-line);
+    transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  }
+  .sched-day.active{ background: var(--champagne); color: var(--obsidian); border-color: var(--champagne); }
+  .sched-hold{
+    align-self: center;
+    font-family:"JetBrains Mono",monospace; font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase;
+    color: rgba(250,248,245,0.6); border: 1px solid var(--obsidian-line); border-radius: 999px;
+    padding: 0.4em 1em; transition: background 0.25s ease, color 0.25s ease, transform 0.15s ease;
+  }
+  .sched-hold.pressed{ background: var(--champagne); color: var(--obsidian); transform: scale(0.95); }
+  .sched-cursor{
+    position:absolute; width: 10px; height: 10px; border-radius: 2px 50% 50% 50%;
+    background: var(--ivory); box-shadow: 0 0 0 2px var(--obsidian), 0 4px 10px rgba(0,0,0,0.4);
+    top: 0; left: 0; opacity: 0; transform: rotate(-45deg);
+  }
+
+  /* ---- philosophy ------------------------------------------------------------ */
+  #philosophy{
+    background: var(--obsidian); color: var(--ivory);
+    padding: clamp(6rem,12vw,10rem) 6vw;
+    position: relative; overflow: hidden;
+    border-radius: 2.5rem; margin: 0 1rem;
+  }
+  #philosophy svg.tex{ position:absolute; inset:0; width:100%; height:100%; opacity:0.14; }
+  #philosophy .stack{ position: relative; z-index: 1; max-width: 900px; margin: 0 auto; text-align:center; }
+  #philosophy .line-a{ font-size: clamp(1.1rem,2vw,1.4rem); color: rgba(250,248,245,0.5); }
+  #philosophy .line-b{
+    font-family:"Playfair Display", serif; font-style: italic; font-weight: 600;
+    font-size: clamp(2.4rem,6vw,4.6rem); line-height: 1.05; margin-top: 1rem;
+  }
+  #philosophy .line-b em{ color: var(--champagne-bright); font-style: italic; }
+  .word{ display:inline-block; opacity: 1; }
+
+  /* ---- protocol -------------------------------------------------------------- */
+  #protocol{ position: relative; }
+  .protocol-card{
+    height: 100vh; display:flex; align-items:center; justify-content:center;
+    background: var(--ivory); padding: 0 6vw;
+  }
+  .protocol-inner{
+    width: min(100%, 980px); display:grid; grid-template-columns: 0.85fr 1.15fr; gap: clamp(2rem,5vw,4.5rem);
+    align-items:center;
+    background: var(--obsidian); color: var(--ivory);
+    border-radius: 2.5rem; padding: clamp(2rem,5vw,4rem);
+    box-shadow: 0 40px 90px -40px rgba(13,13,18,0.5);
+  }
+  .protocol-motif{ aspect-ratio: 1; display:flex; align-items:center; justify-content:center; }
+  .protocol-motif svg{ width: 100%; height: 100%; }
+  .protocol-step{ font-family:"JetBrains Mono",monospace; color: var(--champagne); font-size:0.85rem; letter-spacing:0.1em; }
+  .protocol-inner h3{ font-size: clamp(1.6rem,3vw,2.2rem); margin-top:0.6rem; font-weight:700; }
+  .protocol-inner p{ color: rgba(250,248,245,0.68); margin-top: 0.9rem; max-width: 42ch; line-height:1.55; }
+
+  .spin-slow{ animation: spin 14s linear infinite; transform-origin: center; }
+  .spin-med{ animation: spin 9s linear infinite reverse; transform-origin: center; }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  .scan-line{ animation: scan 2.4s ease-in-out infinite; }
+  @keyframes scan{ 0%,100%{ transform: translateY(-38px); opacity:0.2; } 50%{ transform: translateY(38px); opacity:1; } }
+  .ekg-path{ stroke-dasharray: 340; animation: ekg 2.6s linear infinite; }
+  @keyframes ekg{ from{ stroke-dashoffset: 340; } to{ stroke-dashoffset: -340; } }
+
+  /* ---- get started ------------------------------------------------------------ */
+  #getstarted{ padding: clamp(6rem,12vw,9rem) 6vw; text-align:center; }
+  #getstarted h2{ font-size: clamp(2.2rem,5vw,3.6rem); font-weight:700; max-width: 18ch; margin: 0 auto; }
+  #getstarted h2 .drama{ color: var(--champagne); font-weight: 600; }
+  #getstarted .lede{ margin: 1.3rem auto 2.2rem; max-width: 48ch; color: var(--slate-soft); }
+  #getstarted .btn.champagne{ padding: 1.1em 2.2em; font-size: 0.9rem; }
+
+  /* ---- footer ------------------------------------------------------------------ */
+  footer{
+    background: var(--obsidian); color: var(--ivory);
+    border-radius: 3rem 3rem 0 0;
+    padding: clamp(3rem,6vw,4.5rem) 6vw 2.5rem;
+  }
+  footer .top{ display:grid; grid-template-columns: 1.3fr 1fr; gap: 3rem; padding-bottom: 2.5rem; border-bottom: 1px solid var(--obsidian-line); }
+  footer .brand{ font-family:"Inter",sans-serif; font-weight:700; font-size:1.4rem; }
+  footer .brand .champ{ color: var(--champagne); }
+  footer .tagline{ color: rgba(250,248,245,0.55); margin-top: 0.8rem; max-width: 34ch; font-size: 0.92rem; }
+  footer .cols{ display:flex; gap: 3rem; justify-content:flex-end; }
+  footer .col h4{ font-family:"JetBrains Mono",monospace; font-size:0.7rem; letter-spacing:0.12em; text-transform:uppercase; color: rgba(250,248,245,0.4); margin-bottom:0.9rem; }
+  footer .col a{ display:block; color: rgba(250,248,245,0.75); font-size:0.9rem; padding: 0.3rem 0; }
+  footer .bottom{ display:flex; justify-content:space-between; align-items:center; padding-top: 1.6rem; flex-wrap:wrap; gap:0.8rem; }
+  footer .status{ display:flex; align-items:center; gap:0.6em; font-family:"JetBrains Mono",monospace; font-size:0.75rem; color: rgba(250,248,245,0.6); }
+  footer .status .dot{ width:7px; height:7px; border-radius:50%; background:#7ee787; box-shadow:0 0 10px #7ee787; animation: pulse-dot 2s ease-in-out infinite; }
+  footer .rights{ font-size:0.75rem; color: rgba(250,248,245,0.35); }
+
+  @media (prefers-reduced-motion: reduce){
+    html{ scroll-behavior: auto; }
+    .spin-slow, .spin-med, .scan-line, .ekg-path, .tele-body .caret, .tele-head .pulse, footer .status .dot{ animation: none !important; }
+  }
+
+  @media (max-width: 900px){
+    .feat-grid{ grid-template-columns: 1fr; }
+    .protocol-inner{ grid-template-columns: 1fr; text-align:left; }
+    .protocol-motif{ max-width: 220px; }
+    footer .top{ grid-template-columns: 1fr; }
+    footer .cols{ justify-content:flex-start; }
+    #navbar .navlinks{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <filter id="roomGrain">
+    <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" result="noise"/>
+    <feColorMatrix in="noise" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0"/>
+  </filter>
+</svg>
+<div class="noise-overlay"></div>
+
+<nav id="navbar">
+  <div class="logo tight" style="font-weight:700; letter-spacing:-0.01em;">HOLD <span class="logo-mark">THE ROOM</span></div>
+  <div class="navlinks" style="display:flex; gap:1.6rem; font-size:0.85rem; margin-right:1.4rem;">
+    <a class="lift" href="#loop">The Loop</a>
+    <a class="lift" href="#discipline">Discipline</a>
+    <a class="lift" href="#protocol">Protocol</a>
+  </div>
+  <a class="btn champagne" href="https://famous-spider-906.convex.site" target="_blank" rel="noopener">
+    <span class="fill"></span><span class="label">Take an inbox</span>
+  </a>
+</nav>
+
+<header id="hero">
+  <div class="field"></div>
+  <svg class="veins" viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M-50,620 C 200,560 320,700 560,610 C 800,520 900,640 1250,560" fill="none" stroke="#C9A84C" stroke-width="1" opacity="0.5"/>
+    <path d="M-50,700 C 250,660 380,760 620,690 C 860,620 980,700 1250,650" fill="none" stroke="#C9A84C" stroke-width="0.6" opacity="0.35"/>
+    <path d="M100,-20 C 180,140 90,220 180,380" fill="none" stroke="#C9A84C" stroke-width="0.6" opacity="0.25"/>
+  </svg>
+  <div class="grad-floor"></div>
+  <div class="content">
+    <div class="kicker js-hero-in"><span class="dot"></span>An inbox that waits for you</div>
+    <h1 class="js-hero-in">Your correspondence meets<span class="drama">Discipline.</span></h1>
+    <p class="lede js-hero-in">Every reply arrives drafted in your own voice, resting only on what's true — your site, their site, your last correction. Nothing leaves until you rule on it.</p>
+    <div class="cta-row js-hero-in">
+      <a class="btn champagne" href="https://famous-spider-906.convex.site" target="_blank" rel="noopener">
+        <span class="fill"></span><span class="label">Take an inbox →</span>
+      </a>
+      <span class="fine">FREE FOR 30 MIN · NO CARD</span>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="eyebrow on-light" id="loop">The loop, in three parts</div>
+  <h2 style="font-size:clamp(1.8rem,3.4vw,2.6rem); font-weight:700; max-width:22ch; margin-top:0.9rem;">Not a chatbot. A room that knows what it's allowed to say.</h2>
+
+  <div class="feat-grid">
+    <article class="feat-card">
+      <div class="feat-stage" id="stage-shuffler">
+        <div class="shuf-card" data-slot="0">Your website</div>
+        <div class="shuf-card" data-slot="1">Who they are</div>
+        <div class="shuf-card" data-slot="2">Your last correction</div>
+      </div>
+      <h3>Grounded, never guessed</h3>
+      <p class="desc">Every draft rests on something true — a page from your site, a page from theirs, or the correction you already made once. Nothing invented, ever.</p>
+    </article>
+
+    <article class="feat-card">
+      <div class="feat-stage">
+        <div class="tele-head"><span class="pulse"></span>Live ruling feed</div>
+        <div class="tele-body" id="tele-out">&nbsp;<span class="caret">&nbsp;</span></div>
+      </div>
+      <h3>Rule in your own words</h3>
+      <p class="desc">Reply the way you'd answer a person: a number, a "no," or different words entirely. No portal, no dashboard to learn.</p>
+    </article>
+
+    <article class="feat-card">
+      <div class="feat-stage" id="stage-scheduler">
+        <div class="sched-wrap">
+          <div class="sched-grid" id="sched-grid">
+            <div class="sched-day">S</div><div class="sched-day">M</div><div class="sched-day">T</div>
+            <div class="sched-day">W</div><div class="sched-day">T</div><div class="sched-day">F</div><div class="sched-day">S</div>
+          </div>
+          <div class="sched-hold" id="sched-hold">Hold</div>
+        </div>
+        <div class="sched-cursor" id="sched-cursor"></div>
+      </div>
+      <h3>Deadlines that don't vanish</h3>
+      <p class="desc">Miss one and it doesn't send itself — it tells them you're coming, personally, and puts the item back at the top for you.</p>
+    </article>
+  </div>
+</section>
+
+<section id="discipline">
+  <div id="philosophy">
+    <svg class="tex" viewBox="0 0 800 400" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M-50,120 C 150,60 300,180 500,110 C 650,60 750,140 850,90" fill="none" stroke="#FAF8F5" stroke-width="1"/>
+      <path d="M-50,260 C 180,320 320,220 520,300 C 680,360 760,260 850,320" fill="none" stroke="#FAF8F5" stroke-width="1"/>
+      <path d="M-50,340 C 120,300 260,380 420,330" fill="none" stroke="#C9A84C" stroke-width="1"/>
+    </svg>
+    <div class="stack">
+      <p class="eyebrow" style="justify-content:center;">The discipline</p>
+      <p class="line-a" style="margin-top:1.4rem;">Most inbox assistants focus on: <span style="color:rgba(250,248,245,0.8)">replying fast.</span></p>
+      <p class="line-b">We focus on <em>never replying without you.</em></p>
+    </div>
+  </div>
+</section>
+
+<section id="protocol">
+  <div class="protocol-card">
+    <div class="protocol-inner">
+      <div class="protocol-motif">
+        <svg viewBox="0 0 200 200">
+          <circle class="spin-slow" cx="100" cy="100" r="70" fill="none" stroke="#C9A84C" stroke-width="1" stroke-dasharray="6 10"/>
+          <circle class="spin-med" cx="100" cy="100" r="46" fill="none" stroke="#FAF8F5" stroke-opacity="0.35" stroke-width="1"/>
+          <circle cx="100" cy="100" r="4" fill="#C9A84C"/>
+        </svg>
+      </div>
+      <div>
+        <div class="protocol-step">01 · ARRIVES</div>
+        <h3>It reads before it writes</h3>
+        <p>Every message is read once, quietly. Spam and automated mail stop here — they never reach a draft, and they never reach you.</p>
+      </div>
+    </div>
+  </div>
+  <div class="protocol-card">
+    <div class="protocol-inner">
+      <div class="protocol-motif">
+        <svg viewBox="0 0 200 200">
+          <g opacity="0.5">
+            <circle cx="40" cy="40" r="3" fill="#FAF8F5"/><circle cx="80" cy="40" r="3" fill="#FAF8F5"/><circle cx="120" cy="40" r="3" fill="#FAF8F5"/><circle cx="160" cy="40" r="3" fill="#FAF8F5"/>
+            <circle cx="40" cy="100" r="3" fill="#FAF8F5"/><circle cx="80" cy="100" r="3" fill="#FAF8F5"/><circle cx="120" cy="100" r="3" fill="#FAF8F5"/><circle cx="160" cy="100" r="3" fill="#FAF8F5"/>
+            <circle cx="40" cy="160" r="3" fill="#FAF8F5"/><circle cx="80" cy="160" r="3" fill="#FAF8F5"/><circle cx="120" cy="160" r="3" fill="#FAF8F5"/><circle cx="160" cy="160" r="3" fill="#FAF8F5"/>
+          </g>
+          <line class="scan-line" x1="20" y1="100" x2="180" y2="100" stroke="#C9A84C" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <div>
+        <div class="protocol-step">02 · DIGESTED</div>
+        <h3>One list, not a flood</h3>
+        <p>However many arrived while you were away, one numbered email holds all of it. Nothing repeats. Nothing gets missed.</p>
+      </div>
+    </div>
+  </div>
+  <div class="protocol-card">
+    <div class="protocol-inner">
+      <div class="protocol-motif">
+        <svg viewBox="0 0 200 200">
+          <polyline class="ekg-path" points="0,100 40,100 55,60 70,140 85,20 100,100 200,100" fill="none" stroke="#C9A84C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="protocol-step">03 · SIGNED</div>
+        <h3>Sent only once you say so</h3>
+        <p>A reply leaves in your name the moment you rule — by reply, by link, or on the live page. Not one heartbeat before.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="getstarted">
+  <p class="eyebrow on-light" style="justify-content:center;">Hold the room</p>
+  <h2 style="margin-top:0.9rem;">Read everything.<br>Write everything.<br><span class="drama">Send what you sign.</span></h2>
+  <p class="lede">Give it a name, your email, and a business. You'll be holding your first room in under a minute.</p>
+  <a class="btn champagne" href="https://famous-spider-906.convex.site" target="_blank" rel="noopener">
+    <span class="fill"></span><span class="label">Take an inbox — it's free →</span>
+  </a>
+</section>
+
+<footer>
+  <div class="top">
+    <div>
+      <div class="brand">HOLD <span class="champ">THE ROOM</span></div>
+      <p class="tagline">The inbox that drafts every reply in your voice and sends nothing until you say so.</p>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <h4>Product</h4>
+        <a class="lift" href="#loop">The Loop</a>
+        <a class="lift" href="#discipline">Discipline</a>
+        <a class="lift" href="#protocol">Protocol</a>
+      </div>
+      <div class="col">
+        <h4>Start</h4>
+        <a class="lift" href="https://famous-spider-906.convex.site" target="_blank" rel="noopener">Take an inbox</a>
+      </div>
+    </div>
+  </div>
+  <div class="bottom">
+    <div class="status"><span class="dot"></span>INBOX LISTENING</div>
+    <div class="rights">A demo inbox runs 30 minutes, then it's forgotten.</div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---- navbar morph ------------------------------------------------------
+  var nav = document.getElementById('navbar');
+  var hero = document.getElementById('hero');
+  function syncNav(){
+    var h = hero.getBoundingClientRect();
+    if (h.bottom < 90) nav.classList.add('scrolled');
+    else nav.classList.remove('scrolled');
+  }
+  window.addEventListener('scroll', syncNav, { passive: true });
+  syncNav();
+
+  // ---- hero entrance -------------------------------------------------------
+  if (window.gsap){
+    gsap.context(function(){
+      gsap.fromTo('.js-hero-in', { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 1, stagger: 0.14, ease: 'power3.out', delay: 0.2 });
+    });
+  }
+
+  // ---- diagnostic shuffler --------------------------------------------------
+  var stage = document.getElementById('stage-shuffler');
+  if (stage){
+    var order = [0,1,2];
+    var cards = Array.prototype.slice.call(stage.querySelectorAll('.shuf-card'));
+    function paint(){
+      order.forEach(function(slot, pos){
+        var el = cards.filter(function(c){ return Number(c.dataset.slot) === slot; })[0];
+        if (el) el.dataset.pos = pos;
+      });
+    }
+    paint();
+    if (!reduce){
+      setInterval(function(){
+        order.unshift(order.pop());
+        paint();
+      }, 3000);
+    }
+  }
+
+  // ---- telemetry typewriter --------------------------------------------------
+  var out = document.getElementById('tele-out');
+  if (out && !reduce){
+    var lines = ['> 1', '> 2 no', "> 3 tell them Tuesday works", '> all'];
+    var li = 0;
+    function typeLine(){
+      var text = lines[li];
+      var ci = 0;
+      out.innerHTML = '<span class="caret">&nbsp;</span>';
+      var typeTimer = setInterval(function(){
+        ci++;
+        out.innerHTML = text.slice(0, ci) + '<span class="caret">&nbsp;</span>';
+        if (ci >= text.length){
+          clearInterval(typeTimer);
+          setTimeout(eraseLine, 1400);
+        }
+      }, 55);
+    }
+    function eraseLine(){
+      var text = lines[li];
+      var ci = text.length;
+      var eraseTimer = setInterval(function(){
+        ci--;
+        out.innerHTML = text.slice(0, Math.max(ci,0)) + '<span class="caret">&nbsp;</span>';
+        if (ci <= 0){
+          clearInterval(eraseTimer);
+          li = (li + 1) % lines.length;
+          setTimeout(typeLine, 250);
+        }
+      }, 30);
+    }
+    typeLine();
+  } else if (out) {
+    out.textContent = '> 1';
+  }
+
+  // ---- cursor protocol scheduler ----------------------------------------------
+  var schedStage = document.getElementById('stage-scheduler');
+  if (schedStage && window.gsap && !reduce){
+    var cursor = document.getElementById('sched-cursor');
+    var hold = document.getElementById('sched-hold');
+    var days = Array.prototype.slice.call(document.querySelectorAll('#sched-grid .sched-day'));
+    var target = days[4]; // Thursday
+
+    function centerOf(el){
+      var stageBox = schedStage.getBoundingClientRect();
+      var box = el.getBoundingClientRect();
+      return {
+        x: box.left - stageBox.left + box.width / 2 - 5,
+        y: box.top - stageBox.top + box.height / 2 - 5
+      };
+    }
+
+    function runCycle(){
+      var p1 = centerOf(target);
+      var p2 = centerOf(hold);
+      var tl = gsap.timeline({ delay: 0.6, onComplete: function(){ setTimeout(runCycle, 500); } });
+      gsap.set(cursor, { x: p1.x - 40, y: p1.y - 20, opacity: 0 });
+      tl.to(cursor, { opacity: 1, duration: 0.2 })
+        .to(cursor, { x: p1.x, y: p1.y, duration: 0.7, ease: 'power2.out' })
+        .to(cursor, { scale: 0.7, duration: 0.12, yoyo: true, repeat: 1 })
+        .call(function(){ target.classList.add('active'); })
+        .to(cursor, { x: p2.x, y: p2.y, duration: 0.7, ease: 'power2.inOut', delay: 0.3 })
+        .to(cursor, { scale: 0.7, duration: 0.12, yoyo: true, repeat: 1 })
+        .call(function(){ hold.classList.add('pressed'); })
+        .to(cursor, { opacity: 0, duration: 0.3, delay: 0.2 })
+        .call(function(){ target.classList.remove('active'); hold.classList.remove('pressed'); });
+    }
+    // wait a tick for layout to settle
+    setTimeout(runCycle, 400);
+  }
+
+  // ---- philosophy word reveal + protocol stacking, ScrollTrigger --------------
+  if (window.gsap && window.ScrollTrigger){
+    gsap.registerPlugin(ScrollTrigger);
+
+    gsap.context(function(){
+      gsap.fromTo('#philosophy .line-a, #philosophy .line-b',
+        { y: 30, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1, stagger: 0.2, ease: 'power3.out',
+          scrollTrigger: { trigger: '#philosophy', start: 'top 70%' } });
+
+      if (!reduce){
+        var cards = gsap.utils.toArray('.protocol-card');
+        cards.forEach(function(card, i){
+          ScrollTrigger.create({
+            trigger: card,
+            start: 'top top',
+            pin: true,
+            pinSpacing: i === cards.length - 1
+          });
+          if (i < cards.length - 1){
+            gsap.to(card.querySelector('.protocol-inner'), {
+              scale: 0.92, opacity: 0.5, filter: 'blur(14px)', ease: 'none',
+              scrollTrigger: {
+                trigger: cards[i+1],
+                start: 'top bottom',
+                end: 'top top',
+                scrub: true
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>
