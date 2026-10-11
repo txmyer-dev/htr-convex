@@ -40,6 +40,8 @@ export const tenantFields = {
     webhookId: v.optional(v.string()),
     webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
   }),
+  // Where approved tasks go (kind "task" proposals). The token is CLICKUP_API_TOKEN on the deployment.
+  tasks: v.optional(v.object({ clickupListId: v.string(), listName: v.string() })),
   hold: v.optional(v.union(v.null(), v.object({ since: v.number(), until: v.optional(v.string()) }))),
   digestScheduled: v.optional(v.id("_scheduled_functions")), // immediate mode: the debounced digest
   // A try-it tenant: made from the front door, on a leased inbox, gone after the lease.
@@ -84,7 +86,8 @@ export default defineSchema({
 
   proposals: defineTable({
     tenantId: v.id("tenants"),
-    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site")), // site: a request to the web agent, see facts.ts
+    // site: a request to the web agent, see facts.ts. task: a to-do for the owner's task list, see tasks.ts
+    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site"), v.literal("task")),
     toAddress: v.string(),
     toName: v.optional(v.string()),
     body: v.string(),
@@ -107,6 +110,19 @@ export default defineSchema({
       messageId: v.optional(v.string()),
       references: v.optional(v.string()),
       siteFailure: v.optional(v.union(v.literal("agent"), v.literal("unseen"))), // a failed site request: the web agent said no, or the site never showed it
+      // A task: what the call line said, and the task it became. sentRef holds the ClickUp task id.
+      task: v.optional(v.object({
+        type: v.string(),
+        due: v.optional(v.string()),
+        who: v.optional(v.string()),
+        lane: v.optional(v.string()),
+        session: v.string(),
+        itemId: v.string(),
+        sameness: v.string(),
+        url: v.optional(v.string()),
+        status: v.optional(v.string()), // ClickUp's own status name, as last read
+        syncedAt: v.optional(v.number()),
+      })),
     }),
     createdAt: v.number(),
     ruledAt: v.optional(v.number()),

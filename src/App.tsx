@@ -283,7 +283,7 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
           </>
         ) : (
           <>
-            <button className="primary" disabled={busy} onClick={() => act("sign")}>Send</button>
+            <button className="primary" disabled={busy} onClick={() => act("sign")}>{p.kind === "task" ? "Add task" : "Send"}</button>
             <button disabled={busy} onClick={() => act("reject")}>Skip</button>
             <button disabled={busy} onClick={() => setEditing(true)}>Edit</button>
           </>

@@ -24,5 +24,6 @@ const crons = cronJobs();
 crons.interval("expire overdue drafts", { hours: 1 }, internal.rulings.expireAll, {});
 crons.interval("digest clock", { minutes: 1 }, internal.crons.digestClock, {});
 crons.interval("release demo leases", { minutes: 15 }, internal.demo.sweep, {});
+crons.interval("read open tasks back from ClickUp", { minutes: 15 }, internal.tasks.sync, {});
 crons.cron("read the business sites again", "0 9 * * 1", internal.knowledge.refreshAll, {});
 export default crons;

@@ -17,6 +17,7 @@ import { acknowledgeSite } from "./facts";
 import { siteToken } from "./lib/rulings/token";
 import { SITE_HEADER } from "./lib/site/publish";
 import { handleOwnerReply } from "./rulings";
+import { dispatchTask } from "./tasks";
 import { siteSecret, siteUrl } from "./surface";
 
 export function client(): AgentMail {
@@ -150,6 +151,18 @@ export const dispatch = internalAction({
     if (!p) return "nothing to do"; // already sent, or never signed
     const tenant = await ctx.runQuery(internal.tenants.get, { tenantId: p.tenantId });
     if (!tenant) throw new Error("unknown tenant");
+    if (p.kind === "task") {
+      // Not mail: the ClickUp executor. sentRef = the task id the sync reads back.
+      try {
+        const made = await dispatchTask(tenant, p);
+        await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: made.id });
+        await ctx.runMutation(internal.tasks.noteTask, { proposalId, url: made.url, status: made.status, done: false });
+        return "sent";
+      } catch (e) {
+        await ctx.runMutation(internal.proposals.finishSend, { proposalId, error: String(e) });
+        throw e;
+      }
+    }
     try {
       const inbox = inboxOf(tenant);
       const c = client();

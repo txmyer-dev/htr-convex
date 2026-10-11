@@ -47,7 +47,7 @@ export type ProposeArgs = {
   sourceKind?: string;
   sourceId?: string;
   deadline?: number;
-  kind?: "email" | "sms" | "site";
+  kind?: "email" | "sms" | "site" | "task";
   meta?: Proposal["meta"];
   grounding?: Proposal["grounding"];
   gap?: string;
@@ -140,6 +140,10 @@ export const finishSend = internalMutation({
       return;
     }
     await markSent(ctx, proposalId, ref);
+    if (p.kind === "task") {
+      await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
+      return; // a task went to the task list, not to a person: no message row
+    }
     // A new thread (a site request) is remembered so the web agent's reply in it finds its proposal.
     if (threadId && !p.meta.threadId) await ctx.db.patch(proposalId, { meta: { ...p.meta, threadId } });
     await ctx.db.insert("messages", {

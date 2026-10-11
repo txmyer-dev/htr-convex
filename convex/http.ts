@@ -4,6 +4,7 @@
 //   GET|POST /rulings/{slug}/{id}/{verdict}?t= the Send / Skip links; token-signed
 //   GET  /r/{slug}?k=                          the ruling surface, server-rendered (works without JS)
 //   GET  /tenants/{slug}/proposals?k=          every proposal and its status, JSON
+//   POST|GET /intake/{slug}/call-items          the call line: items in, their states out; bearer intake key
 //   GET  /healthz
 //   GET  /  and everything else                the live surface (src/, built and uploaded by the static hosting
 //                                              component; /?t={slug}&k= is the owner's link)
@@ -18,6 +19,7 @@ import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
 import { liveSurfaceUrl, rulingSecret, siteUrl, surfaceKey } from "./surface";
+import { intakeKey } from "./tasks";
 import type { ProposalView } from "./views";
 
 const http = httpRouter();
@@ -89,6 +91,39 @@ http.route({
   }),
 });
 
+// ---- the call line in -----------------------------------------------------------------------------
+//   POST /intake/{slug}/call-items   {session, items: [...]}  -> pending task proposals
+//   GET  /intake/{slug}/call-items[?session=]               -> what became of each item
+// Bearer = tasks.intakeKey(slug): may hand items in and read them back, never rule.
+
+const intake = httpAction(async (ctx, req) => {
+  const [slug, what] = segments(req.url, "/intake/");
+  if (what !== "call-items") return text("not found", 404);
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!tokenEquals(await intakeKey(slug), bearer)) return text("bad key", 401);
+  const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
+  if (!tenant) return text("unknown tenant", 404);
+  if (req.method === "GET") {
+    const session = new URL(req.url).searchParams.get("session") ?? undefined;
+    return json(await ctx.runQuery(internal.tasks.callItemStates, { tenantId: tenant._id, session }));
+  }
+  let body: { session?: unknown; items?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return text("bad json", 400);
+  }
+  if (typeof body.session !== "string" || !Array.isArray(body.items)) return text("need {session, items[]}", 400);
+  const items = body.items.map((i: any) => ({
+    id: String(i.id ?? ""), type: String(i.type ?? ""), what: String(i.what ?? ""), quote: String(i.quote ?? ""),
+    who: i.who ? String(i.who) : undefined, due: i.due ? String(i.due) : undefined, lane: i.lane ? String(i.lane) : undefined,
+    privacy: i.privacy ? String(i.privacy) : undefined, destination: String(i.destination ?? ""),
+  }));
+  return json(await ctx.runMutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: body.session, items }));
+});
+http.route({ pathPrefix: "/intake/", method: "GET", handler: intake });
+http.route({ pathPrefix: "/intake/", method: "POST", handler: intake });
+
 // ---- rulings by link ------------------------------------------------------------------------------
 
 const ruleByLink = httpAction(async (ctx, req) => {
@@ -159,7 +194,7 @@ http.route({
           `<p style="white-space:pre-wrap">${escapeHtml(p.body)}</p>` +
           (describeGrounding(p.grounding) ? `<p style="color:#5b6070;font-size:.9em">${escapeHtml(describeGrounding(p.grounding)!)}</p>` : "") +
           (p.gap ? `<p style="color:#8a5a00;font-size:.9em">You haven't told me: ${escapeHtml(p.gap)}. Edit with your answer and I'll remember it.</p>` : "") +
-          `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
+          `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">${p.kind === "task" ? "Add task" : "Send"}</a>` +
           `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
           `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a></div>`,
       );

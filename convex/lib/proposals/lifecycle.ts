@@ -3,7 +3,8 @@
 // A proposal is a draft with a status. Approving one is the only path from "the assistant said
 // so" to "a message went out as the owner", and it runs through the owner's ruling exactly once.
 //
-//   pending -> signed -> sending -> sent -> live   (live: a site request the web agent carried out, seen by Firecrawl)
+//   pending -> signed -> sending -> sent -> live   (live: a site request the web agent carried out, seen by Firecrawl;
+//                                                   a task its owner marked done in ClickUp)
 //   pending -> rejected | expired | superseded
 //   sending -> failed -> signed (retry)
 //   sent -> failed (a site request only: the web agent said it could not, or the site never showed it)
@@ -43,6 +44,7 @@ export function oneLine(s: string, n: number): string {
 
 export function summarize(toName: string | undefined | null, toAddress: string, body: string, kind = "email"): string {
   if (kind === "site") return `Website update: “${oneLine(body, 60)}”`;
+  if (kind === "task") return `Task: “${oneLine(body, 60)}”`;
   const who = toName || toAddress;
   return `Reply to ${who}: “${oneLine(body, 60)}”`;
 }
