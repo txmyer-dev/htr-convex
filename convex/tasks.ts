@@ -15,7 +15,7 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
 import { createTask, getTask } from "./lib/tasks/clickup";
-import { accept, description, dueMs, sameness, type CallItem } from "./lib/tasks/intake";
+import { accept, description, dueMs, listFor, sameness, type CallItem } from "./lib/tasks/intake";
 import { rulingToken } from "./lib/rulings/token";
 import { markLive, propose, withStatus } from "./proposals";
 import { rulingSecret } from "./surface";
@@ -45,6 +45,7 @@ export const receiveCallItems = internalMutation({
   handler: async (ctx, { tenantId, session, items }): Promise<IntakeOutcome> => {
     const tenant = await ctx.db.get(tenantId);
     if (!tenant) throw new Error("unknown tenant");
+    if (!tenant.tasks) throw new Error(`tenant ${tenant.slug} has no task list configured`);
     const out: IntakeOutcome = { proposed: 0, already: 0, duplicate: 0, refused: {} };
     const open = (await withStatus(ctx, tenantId, ...OPEN)).filter((p) => p.kind === "task");
     const openSame = new Map(open.map((p) => [p.meta.task?.sameness ?? "", p]));
@@ -68,10 +69,11 @@ export const receiveCallItems = internalMutation({
         out.already++;
         continue;
       }
+      const list = listFor(tenant.tasks, i.lane);
       const p = await propose(ctx, {
-        tenantId, kind: "task", toAddress: "clickup", toName: tenant.tasks?.listName ?? "task list",
+        tenantId, kind: "task", toAddress: "clickup", toName: list.listName,
         body: i.what.trim(), basis: [i.quote], sourceKind: "call_item", sourceId, deadline: undefined,
-        meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, session, itemId: i.id, sameness: same } },
+        meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, listId: list.listId, session, itemId: i.id, sameness: same } },
       });
       openSame.set(same, p);
       out.proposed++;
@@ -108,7 +110,7 @@ export const callItemStates = internalQuery({
 export async function dispatchTask(tenant: Doc<"tenants">, p: Doc<"proposals">): Promise<{ id: string; url: string; status: string }> {
   if (!tenant.tasks) throw new Error(`tenant ${tenant.slug} has no task list configured`);
   const t = p.meta.task;
-  const made = await createTask(token(), tenant.tasks.clickupListId, {
+  const made = await createTask(token(), t?.listId ?? listFor(tenant.tasks, t?.lane).listId, {
     name: p.body,
     description: t ? description({ id: t.itemId, type: t.type, what: p.body, quote: p.basis[0] ?? "", who: t.who, lane: t.lane, destination: "clickup.task" }, t.session) : p.body,
     dueMs: dueMs(t?.due),

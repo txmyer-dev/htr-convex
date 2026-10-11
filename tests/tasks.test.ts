@@ -65,7 +65,7 @@ describe("intake", () => {
     expect(await t.mutation(internal.tasks.receiveCallItems, args)).toMatchObject({ proposed: 0, already: 2 });
     const rows = await tasks(t);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ status: "pending", toName: "Tony – Tasks", body: "Message Alex Kim on Discord", sourceKind: "call_item", sourceId: "20261009-wotai-ff:i263" });
+    expect(rows[0]).toMatchObject({ status: "pending", toName: "WotAI — tasks", body: "Message Alex Kim on Discord", sourceKind: "call_item", sourceId: "20261009-wotai-ff:i263" });
     expect(rows[0].summary).toBe("Task: “Message Alex Kim on Discord”");
     expect(rows[0].basis).toEqual(["I'll ping you on Discord after this."]);
     expect(rows.map((r) => r.body)).not.toContain("Alyx's situation");
@@ -85,6 +85,21 @@ describe("intake", () => {
     const [first] = await tasks(t);
     await t.run((ctx) => ctx.db.patch(first._id, { status: "live" }));
     expect(await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "b", items: [item({ id: "i40" })] })).toMatchObject({ proposed: 1 });
+  });
+});
+
+describe("which list", () => {
+  test("a call's items go to their entity's list; no lane, or one without a list, goes to the default", async () => {
+    const { t, tenant } = await setup();
+    await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [
+      item({ id: "a", what: "one", lane: "wotai" }), item({ id: "b", what: "two", lane: "felani.am" }),
+      item({ id: "c", what: "three", lane: "branded-flow" }), item({ id: "d", what: "four", lane: undefined }),
+    ] });
+    const by = Object.fromEntries((await tasks(t)).map((p) => [p.body, [p.toName, p.meta.task?.listId]]));
+    expect(by).toEqual({
+      one: ["WotAI — tasks", "901422018604"], two: ["felani.am — tasks", "901422018603"],
+      three: ["Tony – Tasks", "901421901184"], four: ["Tony – Tasks", "901421901184"],
+    });
   });
 });
 

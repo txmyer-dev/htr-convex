@@ -38,6 +38,14 @@ export function dueMs(due?: string): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+export type TaskLists = { clickupListId: string; listName: string; byLane?: Array<{ lane: string; clickupListId: string; listName: string }> };
+
+/** The list an item lands in: its lane's entity list, else the owner's default list. */
+export function listFor(lists: TaskLists, lane?: string): { listId: string; listName: string } {
+  const hit = lists.byLane?.find((l) => l.lane === lane);
+  return hit ? { listId: hit.clickupListId, listName: hit.listName } : { listId: lists.clickupListId, listName: lists.listName };
+}
+
 export function description(i: CallItem, session: string): string {
   return [
     `> ${i.quote}`,

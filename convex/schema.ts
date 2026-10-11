@@ -41,7 +41,11 @@ export const tenantFields = {
     webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
   }),
   // Where approved tasks go (kind "task" proposals). The token is CLICKUP_API_TOKEN on the deployment.
-  tasks: v.optional(v.object({ clickupListId: v.string(), listName: v.string() })),
+  // byLane sends a call's items to that entity's list (the line's lane); anything else goes to the default.
+  tasks: v.optional(v.object({
+    clickupListId: v.string(), listName: v.string(),
+    byLane: v.optional(v.array(v.object({ lane: v.string(), clickupListId: v.string(), listName: v.string() }))),
+  })),
   hold: v.optional(v.union(v.null(), v.object({ since: v.number(), until: v.optional(v.string()) }))),
   digestScheduled: v.optional(v.id("_scheduled_functions")), // immediate mode: the debounced digest
   // A try-it tenant: made from the front door, on a leased inbox, gone after the lease.
@@ -116,6 +120,7 @@ export default defineSchema({
         due: v.optional(v.string()),
         who: v.optional(v.string()),
         lane: v.optional(v.string()),
+        listId: v.optional(v.string()), // chosen at intake from the lane; shown on the card as toName
         session: v.string(),
         itemId: v.string(),
         sameness: v.string(),

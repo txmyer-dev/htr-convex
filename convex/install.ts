@@ -34,7 +34,13 @@ export const TENANTS: Install[] = [
       // fact the site does not say becomes a site proposal; without it, facts stay in the room.
       webAgent: "web-felaniam@agentmail.to",
     },
-    tasks: { clickupListId: "901421901184", listName: "Tony – Tasks" },
+    tasks: {
+      clickupListId: "901421901184", listName: "Tony – Tasks", // personal, branded-flow, no lane
+      byLane: [
+        { lane: "wotai", clickupListId: "901422018604", listName: "WotAI — tasks" },
+        { lane: "felani.am", clickupListId: "901422018603", listName: "felani.am — tasks" },
+      ],
+    },
     channels: {
       // Filled once the AgentMail inbox exists: `npx convex run mail:provision '{"slug":"tony"}'`
     },
