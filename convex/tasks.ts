@@ -159,3 +159,9 @@ export const sync = internalAction({
     return n;
   },
 });
+
+/** `npx convex run tasks:intakeKeyFor '{"slug":"tony"}'`: the key call-listener puts in its .env. */
+export const intakeKeyFor = internalQuery({
+  args: { slug: v.string() },
+  handler: async (_ctx, { slug }): Promise<string> => await intakeKey(slug),
+});
