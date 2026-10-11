@@ -4,7 +4,9 @@
 // Names only here; secrets live on the Convex deployment (`npx convex env set ...`).
 // Client zero is Tony's own mailbox for a week.
 
-import { internalMutation, mutation } from "./_generated/server";
+import { v } from "convex/values";
+import { internalMutation, internalQuery, mutation } from "./_generated/server";
+import { liveSurfaceUrl } from "./surface";
 import type { Doc } from "./_generated/dataModel";
 
 type Install = Omit<Doc<"tenants">, "_id" | "_creationTime" | "hold" | "digestScheduled">;
@@ -64,4 +66,10 @@ export const applyInternal = internalMutation({
   handler: async (ctx) => {
     for (const t of TENANTS) await upsert(ctx, t);
   },
+});
+
+/** `npx convex run install:ownerLink '{"slug":"tony"}'`: the owner's link to the live surface (the key is the login). */
+export const ownerLink = internalQuery({
+  args: { slug: v.string() },
+  handler: async (_ctx, { slug }): Promise<string> => await liveSurfaceUrl(slug),
 });
