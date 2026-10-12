@@ -5,7 +5,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
-import { KEEP_MS, LEASE_MS, normalizeSite } from "../convex/demo";
+import { KEEP_MS, LEASE_MS, normalizeSite, poolCap } from "../convex/demo";
 import type { InboundMail } from "../convex/lib/mail/inbound";
 import schema from "../convex/schema";
 
@@ -152,5 +152,16 @@ describe("the pretend customer", () => {
     await t.mutation(internal.demo.sweep, {});
     const tenant = (await t.run((ctx) => ctx.db.get(tenantId as Id<"tenants">)))!;
     expect(tenant.channels.inboxId).toBeUndefined();
+  });
+});
+
+describe("closing the demo", () => {
+  test("HTR_DEMO_POOL=0 means closed; unset means two", () => {
+    const before = process.env.HTR_DEMO_POOL;
+    process.env.HTR_DEMO_POOL = "0";
+    expect(poolCap()).toBe(0);
+    delete process.env.HTR_DEMO_POOL;
+    expect(poolCap()).toBe(2);
+    if (before !== undefined) process.env.HTR_DEMO_POOL = before;
   });
 });

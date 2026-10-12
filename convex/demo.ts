@@ -28,9 +28,10 @@ const POOL_MAX = 50; // the table is never larger than the pool; this bounds the
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** HTR_DEMO_POOL=0 closes the demo: no inbox is created and nobody is let in. Unset means 2. */
 export function poolCap(): number {
   const n = Number(process.env.HTR_DEMO_POOL ?? 2);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
 }
 
 /** "acme.com" -> "https://acme.com"; anything unparseable -> undefined. */
@@ -149,6 +150,7 @@ export const start = action({
     if (a.site?.trim() && !site) return { ok: false, error: "That website address does not look right." };
     const timeZone = a.timeZone && isTimeZone(a.timeZone) ? a.timeZone : "America/New_York";
 
+    if (poolCap() === 0) return { ok: false, error: "The demo is closed." };
     const state = await ctx.runQuery(internal.demo.poolState, {});
     if (state.free === 0) {
       if (state.total >= poolCap()) return { ok: false, busy: true, nextFree: state.nextFree };
