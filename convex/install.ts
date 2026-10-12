@@ -5,7 +5,7 @@
 // Client zero is Tony's own mailbox for a week.
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { liveSurfaceUrl } from "./surface";
 import type { Doc } from "./_generated/dataModel";
 
@@ -60,7 +60,7 @@ async function upsert(ctx: { db: any }, t: Install) {
 }
 
 /** `npx convex run install:apply` after editing TENANTS. Idempotent. */
-export const apply = mutation({
+export const apply = internalMutation({
   args: {},
   handler: async (ctx) => {
     const ids = [];

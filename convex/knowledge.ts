@@ -10,7 +10,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { action, internalAction, internalMutation, internalQuery, mutation, type ActionCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { normalizeBaseUrl } from "./drafter";
 import { chunkMarkdown } from "./lib/knowledge/chunk";
 import { senderSite } from "./lib/knowledge/domain";
@@ -158,7 +158,7 @@ async function readSite(ctx: ActionCtx, tenant: Doc<"tenants">, urls?: string[])
 }
 
 /** `npx convex run knowledge:refresh '{"slug":"tony"}'` — the business site, plus any extra URLs. */
-export const refresh = action({
+export const refresh = internalAction({
   args: { slug: v.string(), urls: v.optional(v.array(v.string())) },
   handler: async (ctx, { slug, urls }): Promise<Read> => {
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.bySlug, { slug });
@@ -198,7 +198,7 @@ export const refreshAll = internalAction({
 });
 
 /** `npx convex run knowledge:clear '{"slug":"tony"}'` — forget everything read for a tenant. */
-export const clear = mutation({
+export const clear = internalMutation({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
     const tenant = await ctx.db.query("tenants").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();

@@ -208,7 +208,7 @@ export const retrySend = action({
  * deployment, remember all of it on the tenant, secret included, so a second client needs no
  * new environment variable. The secret is also returned once, for the log.
  */
-export const provision = action({
+export const provision = internalAction({
   args: { slug: v.string(), username: v.optional(v.string()) },
   handler: async (ctx, { slug, username }): Promise<{ inboxId: string; webhookId: string; webhookSecret: string; url: string }> => {
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.bySlug, { slug });
