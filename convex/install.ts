@@ -20,7 +20,8 @@ export const TENANTS: Install[] = [
       name: "Tony",
       names: ["Tony", "Tony Myers"],
       email: "txmyer@gmail.com", // rulings by email are checked against this address
-      digestAt: "immediate", // client zero: tell me as soon as a draft exists (later: "17:00")
+      digestAt: "immediate", // client zero: each item to the phone as soon as it exists
+      weeklyDigest: { weekday: 6, at: "18:00" }, // and one email on Sunday evening: the last call
       quietHours: ["21:00", "08:00"],
       defaultDeadlineDays: 2,
       discloseAssistant: true,

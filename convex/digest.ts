@@ -14,7 +14,7 @@ import { renderDigest, type DigestItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { notification, ntfyConfig, push } from "./lib/notify/ntfy";
 import { rulingLinks } from "./lib/rulings/token";
-import { pendingFor } from "./proposals";
+import { expire, pendingFor } from "./proposals";
 import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
 
 export const DEBOUNCE_MS = 60_000;
@@ -36,10 +36,17 @@ export type BuiltDigest = {
 };
 
 export const build = internalMutation({
-  args: { tenantId: v.id("tenants") },
-  handler: async (ctx, { tenantId }): Promise<BuiltDigest | null> => {
+  args: { tenantId: v.id("tenants"), weekly: v.optional(v.boolean()) },
+  handler: async (ctx, { tenantId, weekly }): Promise<BuiltDigest | null> => {
     const tenant = await ctx.db.get(tenantId);
     if (!tenant) throw new Error("unknown tenant");
+    if (weekly) {
+      // Last call was last week: what is still waiting now is dropped, quietly (no notice goes out).
+      for (const p of await pendingFor(ctx, tenantId)) {
+        if (p.lastCallAt === undefined) continue;
+        if ((await expire(ctx, p._id)) !== null) await appendEvent(ctx, tenantId, "proposal.last_call_passed", { proposalId: p._id });
+      }
+    }
     const pending = await pendingFor(ctx, tenantId);
     if (pending.length === 0) return null;
     const now = Date.now();
@@ -53,8 +60,9 @@ export const build = internalMutation({
       mapping: numbered.map(([n, p]) => ({ n, proposalId: p._id })),
       body,
       sentAt: now,
+      weekly,
     });
-    for (const [n, p] of numbered) await ctx.db.patch(p._id, { digestId, digestNo: n });
+    for (const [n, p] of numbered) await ctx.db.patch(p._id, { digestId, digestNo: n, ...(weekly ? { lastCallAt: now } : {}) });
     await appendEvent(ctx, tenantId, "digest.built", { digestId, count: numbered.length });
     return {
       digestId,
@@ -78,7 +86,7 @@ export const setRef = internalMutation({
 });
 
 /** The digest email: the numbered text, then one Send / Skip pair per draft, then the live surface. */
-export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest): Promise<{ subject: string; text: string; html: string }> {
+export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest, weekly = false): Promise<{ subject: string; text: string; html: string }> {
   const base = `${siteUrl()}/rulings`;
   const secret = rulingSecret();
   const surface = await liveSurfaceUrl(tenant.slug);
@@ -102,10 +110,12 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest): P
     );
   }
   const count = built.items.length;
-  const subject = `${count} waiting on you`;
-  const text = `${built.body}\n\nOne tap:\n${linkLines.join("\n")}\n\nEverything, live: ${surface}`;
+  const subject = weekly ? `Last call: ${count} still waiting on you` : `${count} waiting on you`;
+  const lastCall = weekly ? "Last call. Anything you haven't ruled on by next week's email is dropped." : "";
+  const text = `${lastCall ? `${lastCall}\n\n` : ""}${built.body}\n\nOne tap:\n${linkLines.join("\n")}\n\nEverything, live: ${surface}`;
   const html =
     `<div style="font-family:system-ui,sans-serif;color:#1d222c;max-width:640px">` +
+    (lastCall ? `<p style="font-weight:600">${lastCall}</p>` : "") +
     `<p style="white-space:pre-wrap">${escapeHtml(built.body)}</p>${cards.join("")}` +
     `<p><a href="${surface}">Everything, live →</a></p></div>`;
   return { subject, text, html };
@@ -143,15 +153,16 @@ async function pushNew(ctx: ActionCtx, tenant: Doc<"tenants">, built: BuiltDiges
 }
 
 export const run = internalAction({
-  args: { tenantId: v.id("tenants") },
-  handler: async (ctx, { tenantId }): Promise<Id<"digests"> | null> => {
-    const built: BuiltDigest | null = await ctx.runMutation(internal.digest.build, { tenantId });
+  args: { tenantId: v.id("tenants"), weekly: v.optional(v.boolean()) },
+  handler: async (ctx, { tenantId, weekly }): Promise<Id<"digests"> | null> => {
+    const built: BuiltDigest | null = await ctx.runMutation(internal.digest.build, { tenantId, weekly });
     if (!built) return null;
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
     await pushNew(ctx, tenant, built);
     if (!tenant.channels.inboxId && ntfyConfig()) return built.digestId; // the phone is the channel; no inbox to mail from
-    const mail = await digestEmail(tenant, built);
+    if (tenant.owner.weeklyDigest && !weekly) return built.digestId; // pushes now, the email on its weekly day
+    const mail = await digestEmail(tenant, built, weekly);
     const ref = await ctx.runAction(internal.mail.sendToOwner, { tenantId, ...mail });
     if (ref) await ctx.runMutation(internal.digest.setRef, { digestId: built.digestId, ref });
     return built.digestId;

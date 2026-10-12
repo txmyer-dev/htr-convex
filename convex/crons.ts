@@ -1,17 +1,22 @@
 // The clock. Hourly: overdue drafts stop waiting. Every quarter hour: demo leases that ran out are released.
-// Every minute: any tenant whose digest hour is now gets one (immediate-mode tenants are served
+// Every minute: any tenant whose digest hour (or weekly last call) is now gets one (immediate-mode tenants are served
 // by the debounced scheduler instead). Monday mornings: every business site is read again.
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { hhmm } from "./lib/time";
+import { hhmm, localParts } from "./lib/time";
 
 export const digestClock = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
     for (const t of await ctx.db.query("tenants").take(500)) {
+      const w = t.owner.weeklyDigest;
+      if (w && localParts(now, t.timeZone).weekday === w.weekday && hhmm(now, t.timeZone) === w.at) {
+        const last = await ctx.db.query("digests").withIndex("by_tenant_sent", (q) => q.eq("tenantId", t._id)).order("desc").first();
+        if (!(last?.weekly && now - last.sentAt < 120_000)) await ctx.scheduler.runAfter(0, internal.digest.run, { tenantId: t._id, weekly: true });
+      }
       if (t.owner.digestAt === "immediate" || t.owner.digestAt !== hhmm(now, t.timeZone)) continue;
       const last = await ctx.db.query("digests").withIndex("by_tenant_sent", (q) => q.eq("tenantId", t._id)).order("desc").first();
       if (last && now - last.sentAt < 120_000) continue; // this minute already fired

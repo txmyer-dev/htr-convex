@@ -23,6 +23,8 @@ export const tenantFields = {
     names: v.array(v.string()), // how people address the owner; the reader looks for these
     email: v.string(), // THE identity: a ruling by email is checked against this address
     digestAt: v.string(), // "immediate" or "HH:MM" local
+    // With this set, the digest email goes out once a week (last call) and pushes carry the rest; weekday 0 = Monday.
+    weeklyDigest: v.optional(v.object({ weekday: v.number(), at: v.string() })),
     quietHours: v.optional(v.array(v.string())), // ["21:00", "08:00"]
     defaultDeadlineDays: v.number(),
     discloseAssistant: v.boolean(),
@@ -105,6 +107,7 @@ export default defineSchema({
     digestNo: v.optional(v.number()),
     digestId: v.optional(v.id("digests")),
     pushedAt: v.optional(v.number()), // sent to the owner's phone (lib/notify/ntfy.ts); once per item
+    lastCallAt: v.optional(v.number()), // was in a weekly digest; still waiting at the next one = expired
     edited: v.boolean(),
     sentRef: v.optional(v.string()),
     error: v.optional(v.string()),
@@ -160,6 +163,7 @@ export default defineSchema({
     body: v.string(),
     sentAt: v.number(),
     ref: v.optional(v.string()), // the digest email's message id, so a reply threads back
+    weekly: v.optional(v.boolean()),
   }).index("by_tenant_sent", ["tenantId", "sentAt"]),
 
   events: defineTable({
