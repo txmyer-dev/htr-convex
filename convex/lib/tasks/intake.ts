@@ -13,9 +13,15 @@ export type CallItem = {
   lane?: string;
   privacy?: string; // shareable | other_private | ...
   destination: string; // from line/routing.md
+  series?: string; // the meeting series the call belongs to (call-listener brief/meetings.md); agenda items need it
 };
 
-export const TASK_DESTINATIONS = new Set(["clickup.task", "clickup.reminder"]);
+export const TASK_DESTINATIONS = new Set(["clickup.task", "clickup.reminder", "clickup.agenda"]);
+
+/** "Raise next time" items are ClickUp tasks carrying the series tag; the brief for that series reads them. */
+export function agendaTag(series: string): string {
+  return `raise-${series.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
+}
 
 export type Verdict = { take: true } | { take: false; why: string };
 
@@ -23,6 +29,7 @@ export function accept(i: CallItem): Verdict {
   if (i.privacy === "other_private") return { take: false, why: "private" };
   if (!TASK_DESTINATIONS.has(i.destination)) return { take: false, why: `destination ${i.destination}` };
   if (!i.what?.trim()) return { take: false, why: "empty" };
+  if (i.destination === "clickup.agenda" && !i.series?.trim()) return { take: false, why: "agenda without series" };
   return { take: true };
 }
 

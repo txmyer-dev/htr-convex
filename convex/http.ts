@@ -5,6 +5,7 @@
 //   GET  /r/{slug}?k=                          the ruling surface, server-rendered (works without JS)
 //   GET  /tenants/{slug}/proposals?k=          every proposal and its status, JSON
 //   POST|GET /intake/{slug}/call-items          the call line: items in, their states out; bearer intake key
+//   GET  /intake/{slug}/agenda?tag=raise-<series>  what waits to be raised at that series' next call
 //   GET  /healthz
 //   GET  /  and everything else                the live surface (src/, built and uploaded by the static hosting
 //                                              component; /?t={slug}&k= is the owner's link)
@@ -20,7 +21,7 @@ import { svixVerify } from "./lib/mail/svix";
 import { ntfyConfig } from "./lib/notify/ntfy";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
 import { liveSurfaceUrl, rulingSecret, siteUrl, surfaceKey } from "./surface";
-import { intakeKey } from "./tasks";
+import { agendaFor, intakeKey } from "./tasks";
 import type { ProposalView } from "./views";
 
 const http = httpRouter();
@@ -95,15 +96,21 @@ http.route({
 // ---- the call line in -----------------------------------------------------------------------------
 //   POST /intake/{slug}/call-items   {session, items: [...]}  -> pending task proposals
 //   GET  /intake/{slug}/call-items[?session=]               -> what became of each item
+//   GET  /intake/{slug}/agenda?tag=raise-<series>          -> open ClickUp tasks with that tag
 // Bearer = tasks.intakeKey(slug): may hand items in and read them back, never rule.
 
 const intake = httpAction(async (ctx, req) => {
   const [slug, what] = segments(req.url, "/intake/");
-  if (what !== "call-items") return text("not found", 404);
+  if (what !== "call-items" && what !== "agenda") return text("not found", 404);
   const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!tokenEquals(await intakeKey(slug), bearer)) return text("bad key", 401);
   const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
   if (!tenant) return text("unknown tenant", 404);
+  if (what === "agenda") {
+    const tag = new URL(req.url).searchParams.get("tag") ?? "";
+    if (req.method !== "GET" || !/^raise-[a-z0-9-]+$/.test(tag)) return text("GET ?tag=raise-<series>", 400);
+    return json(await agendaFor(tenant, tag));
+  }
   if (req.method === "GET") {
     const session = new URL(req.url).searchParams.get("session") ?? undefined;
     return json(await ctx.runQuery(internal.tasks.callItemStates, { tenantId: tenant._id, session }));
@@ -119,6 +126,7 @@ const intake = httpAction(async (ctx, req) => {
     id: String(i.id ?? ""), type: String(i.type ?? ""), what: String(i.what ?? ""), quote: String(i.quote ?? ""),
     who: i.who ? String(i.who) : undefined, due: i.due ? String(i.due) : undefined, lane: i.lane ? String(i.lane) : undefined,
     privacy: i.privacy ? String(i.privacy) : undefined, destination: String(i.destination ?? ""),
+    series: i.series ? String(i.series) : undefined,
   }));
   return json(await ctx.runMutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: body.session, items }));
 });

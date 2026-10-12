@@ -5,8 +5,8 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import schema from "../convex/schema";
-import { createTask, getTask } from "../convex/lib/tasks/clickup";
-import { accept, dueMs, sameness, type CallItem } from "../convex/lib/tasks/intake";
+import { createTask, getTask, openTasksTagged } from "../convex/lib/tasks/clickup";
+import { accept, agendaTag, dueMs, sameness, type CallItem } from "../convex/lib/tasks/intake";
 import { surfaceKey } from "../convex/surface";
 import { intakeKey } from "../convex/tasks";
 
@@ -163,5 +163,35 @@ describe("the intake endpoint", () => {
     expect(await ok.json()).toMatchObject({ proposed: 1 });
     const back = await t.fetch(`${url}?session=s1`, { headers: { authorization: `Bearer ${await intakeKey(tenant.slug)}` } });
     expect(await back.json()).toEqual([expect.objectContaining({ itemId: "i263", status: "pending" })]);
+  });
+});
+
+describe("raise next time", () => {
+  test("the series becomes a tag; an agenda item without a series is refused", async () => {
+    expect(agendaTag("WotAI Q&A")).toBe("raise-wotai-q-a");
+    expect(accept(item({ destination: "clickup.agenda" }))).toEqual({ take: false, why: "agenda without series" });
+    const { t, tenant } = await setup();
+    await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [
+      item({ id: "r1", type: "raise_next", what: "Ask Alex about the call format", destination: "clickup.agenda", series: "WotAI Q&A" }),
+    ] });
+    const [p] = await tasks(t);
+    expect(p.toName).toBe("next WotAI Q&A (WotAI — tasks)");
+    expect(p.meta.task?.tag).toBe("raise-wotai-q-a");
+  });
+
+  test("the agenda read keeps open tasks only, oldest first; create sends the tag", async () => {
+    const calls: string[] = [];
+    const f = (async (url: string, init: RequestInit = {}) => {
+      calls.push(`${init.method ?? "GET"} ${url} ${init.body ?? ""}`);
+      return new Response(JSON.stringify({ id: "1", tasks: [
+        { id: "b", name: "second", url: "u2", list: { name: "WotAI — tasks" }, date_created: "200", status: { type: "open" } },
+        { id: "a", name: "first", url: "u1", list: { name: "WotAI — tasks" }, date_created: "100", status: { type: "open" } },
+        { id: "c", name: "raised", url: "u3", list: { name: "WotAI — tasks" }, date_created: "50", status: { type: "closed" } },
+      ], status: { type: "open" } }), { status: 200 });
+    }) as typeof fetch;
+    expect((await openTasksTagged("pk", "901", "raise-wotai-q-a", f)).map((x) => x.name)).toEqual(["first", "second"]);
+    expect(calls[0]).toContain("/team/901/task?tags[]=raise-wotai-q-a");
+    await createTask("pk", "L", { name: "n", description: "d", tags: ["raise-wotai-q-a"] }, f);
+    expect(calls[1]).toContain('"tags":["raise-wotai-q-a"]');
   });
 });

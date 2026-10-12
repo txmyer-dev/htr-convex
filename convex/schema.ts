@@ -44,6 +44,7 @@ export const tenantFields = {
   // byLane sends a call's items to that entity's list (the line's lane); anything else goes to the default.
   tasks: v.optional(v.object({
     clickupListId: v.string(), listName: v.string(),
+    teamId: v.optional(v.string()), // the ClickUp workspace: agenda reads search it by tag
     byLane: v.optional(v.array(v.object({ lane: v.string(), clickupListId: v.string(), listName: v.string() }))),
   })),
   hold: v.optional(v.union(v.null(), v.object({ since: v.number(), until: v.optional(v.string()) }))),
@@ -122,6 +123,7 @@ export default defineSchema({
         who: v.optional(v.string()),
         lane: v.optional(v.string()),
         listId: v.optional(v.string()), // chosen at intake from the lane; shown on the card as toName
+        tag: v.optional(v.string()), // raise-<series>: a "raise next time" agenda item (lib/tasks/intake.ts agendaTag)
         session: v.string(),
         itemId: v.string(),
         sameness: v.string(),

@@ -14,8 +14,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
-import { createTask, getTask } from "./lib/tasks/clickup";
-import { accept, description, dueMs, listFor, sameness, type CallItem } from "./lib/tasks/intake";
+import { createTask, getTask, openTasksTagged, type AgendaTask } from "./lib/tasks/clickup";
+import { accept, agendaTag, description, dueMs, listFor, sameness, type CallItem } from "./lib/tasks/intake";
 import { rulingToken } from "./lib/rulings/token";
 import { markLive, propose, withStatus } from "./proposals";
 import { rulingSecret } from "./surface";
@@ -33,6 +33,7 @@ function token(): string {
 const callItem = v.object({
   id: v.string(), type: v.string(), what: v.string(), quote: v.string(), who: v.optional(v.string()),
   due: v.optional(v.string()), lane: v.optional(v.string()), privacy: v.optional(v.string()), destination: v.string(),
+  series: v.optional(v.string()),
 });
 
 const OPEN = ["pending", "signed", "sending", "sent"] as const;
@@ -70,10 +71,11 @@ export const receiveCallItems = internalMutation({
         continue;
       }
       const list = listFor(tenant.tasks, i.lane);
+      const tag = i.destination === "clickup.agenda" ? agendaTag(i.series!) : undefined;
       const p = await propose(ctx, {
-        tenantId, kind: "task", toAddress: "clickup", toName: list.listName,
+        tenantId, kind: "task", toAddress: "clickup", toName: tag ? `next ${i.series} (${list.listName})` : list.listName,
         body: i.what.trim(), basis: [i.quote], sourceKind: "call_item", sourceId, deadline: undefined,
-        meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, listId: list.listId, session, itemId: i.id, sameness: same } },
+        meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, listId: list.listId, tag, session, itemId: i.id, sameness: same } },
       });
       openSame.set(same, p);
       out.proposed++;
@@ -114,6 +116,7 @@ export async function dispatchTask(tenant: Doc<"tenants">, p: Doc<"proposals">):
     name: p.body,
     description: t ? description({ id: t.itemId, type: t.type, what: p.body, quote: p.basis[0] ?? "", who: t.who, lane: t.lane, destination: "clickup.task" }, t.session) : p.body,
     dueMs: dueMs(t?.due),
+    tags: t?.tag ? [t.tag] : undefined,
   });
   return { id: made.id, url: made.url, status: made.status };
 }
@@ -167,3 +170,11 @@ export const intakeKeyFor = internalQuery({
   args: { slug: v.string() },
   handler: async (_ctx, { slug }): Promise<string> => await intakeKey(slug),
 });
+
+// ---- the agenda ----------------------------------------------------------------------------
+
+/** What waits to be raised at a series' next meeting: open ClickUp tasks tagged raise-<series>. */
+export async function agendaFor(tenant: Doc<"tenants">, tag: string): Promise<AgendaTask[]> {
+  if (!tenant.tasks?.teamId) return [];
+  return await openTasksTagged(token(), tenant.tasks.teamId, tag);
+}

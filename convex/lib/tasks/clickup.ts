@@ -4,7 +4,8 @@
 
 const API = "https://api.clickup.com/api/v2";
 
-export type NewTask = { name: string; description: string; dueMs?: number };
+export type NewTask = { name: string; description: string; dueMs?: number; tags?: string[] };
+export type AgendaTask = { id: string; name: string; url: string; list: string; createdMs: number };
 export type TaskState = { id: string; url: string; status: string; done: boolean };
 
 type Fetch = typeof fetch;
@@ -28,9 +29,19 @@ export function stateOf(task: any): TaskState {
 export async function createTask(token: string, listId: string, t: NewTask, f: Fetch = fetch): Promise<TaskState> {
   const body: Record<string, unknown> = { name: t.name, markdown_description: t.description };
   if (t.dueMs) Object.assign(body, { due_date: t.dueMs, due_date_time: true });
+  if (t.tags?.length) body.tags = t.tags;
   return stateOf(await call(f, token, `/list/${encodeURIComponent(listId)}/task`, { method: "POST", body: JSON.stringify(body) }));
 }
 
 export async function getTask(token: string, id: string, f: Fetch = fetch): Promise<TaskState> {
   return stateOf(await call(f, token, `/task/${encodeURIComponent(id)}`));
+}
+
+/** Open tasks anywhere in the workspace carrying a tag: a series' agenda, oldest first. */
+export async function openTasksTagged(token: string, teamId: string, tag: string, f: Fetch = fetch): Promise<AgendaTask[]> {
+  const res = await call(f, token, `/team/${encodeURIComponent(teamId)}/task?tags[]=${encodeURIComponent(tag)}&subtasks=true`);
+  return (res.tasks ?? [])
+    .filter((t: any) => !stateOf(t).done)
+    .map((t: any) => ({ id: String(t.id), name: String(t.name ?? ""), url: String(t.url ?? ""), list: String(t.list?.name ?? ""), createdMs: Number(t.date_created ?? 0) }))
+    .sort((a: AgendaTask, b: AgendaTask) => a.createdMs - b.createdMs);
 }
