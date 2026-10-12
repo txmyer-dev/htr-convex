@@ -69,3 +69,33 @@ describe("the digest run", () => {
     expect(sent).toHaveLength(2); // the first item was not pushed again
   });
 });
+
+describe("tapping from the ntfy web app", () => {
+  afterEach(() => {
+    delete process.env.HTR_NTFY_TOPIC;
+  });
+
+  test("ntfy's origin may read the ruling's answer, so it can clear the notification; no one else may", async () => {
+    process.env.HTR_RULING_SECRET = "test-secret";
+    process.env.CONVEX_SITE_URL = "https://test.convex.site";
+    process.env.HTR_NTFY_TOPIC = "htr-test";
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.install.applyInternal, {});
+    const tenant = (await t.run(async (ctx) => await ctx.db.query("tenants").first()))!;
+    const item = { id: "i1", type: "my_commitment", what: "Post it", quote: "q", lane: "wotai", privacy: "shareable", destination: "clickup.task" };
+    await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [item] });
+    const p = (await t.run(async (ctx) => await ctx.db.query("proposals").first()))!;
+    const { rulingLinks } = await import("../convex/lib/rulings/token");
+    const links = await rulingLinks("https://test.convex.site/rulings", "test-secret", tenant.slug, p._id);
+    const path = new URL(links.reject);
+
+    const pre = await t.fetch(path.pathname + path.search, { method: "OPTIONS", headers: { origin: "https://ntfy.sh" } });
+    expect(pre.headers.get("access-control-allow-origin")).toBe("https://ntfy.sh");
+    const other = await t.fetch(path.pathname + path.search, { method: "POST", headers: { origin: "https://evil.example" } });
+    expect(other.headers.get("access-control-allow-origin")).toBeNull();
+    const res = await t.fetch(path.pathname + path.search, { method: "POST", headers: { origin: "https://ntfy.sh" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://ntfy.sh");
+    expect((await t.run((ctx) => ctx.db.get(p._id)))!.status).toBe("rejected");
+  });
+});

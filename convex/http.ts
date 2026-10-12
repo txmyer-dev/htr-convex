@@ -17,6 +17,7 @@ import { httpAction } from "./_generated/server";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
+import { ntfyConfig } from "./lib/notify/ntfy";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
 import { liveSurfaceUrl, rulingSecret, siteUrl, surfaceKey } from "./surface";
 import { intakeKey } from "./tasks";
@@ -126,7 +127,25 @@ http.route({ pathPrefix: "/intake/", method: "POST", handler: intake });
 
 // ---- rulings by link ------------------------------------------------------------------------------
 
+// The ntfy web app taps Send / Skip with a cross-origin fetch, and clears the notification only
+// when it can read a 200: let the ntfy server's origin (and only it) read the answer.
+function ntfyOrigin(req: Request): string | null {
+  const origin = req.headers.get("origin");
+  const cfg = ntfyConfig();
+  return origin && cfg && origin === new URL(cfg.url).origin ? origin : null;
+}
+
 const ruleByLink = httpAction(async (ctx, req) => {
+  const res = await ruleByLinkInner(ctx, req);
+  const origin = ntfyOrigin(req);
+  if (origin) {
+    res.headers.set("Access-Control-Allow-Origin", origin);
+    res.headers.set("Vary", "Origin");
+  }
+  return res;
+});
+
+async function ruleByLinkInner(ctx: Parameters<Parameters<typeof httpAction>[0]>[0], req: Request): Promise<Response> {
   const [slug, proposalId, verdict] = segments(req.url, "/rulings/");
   const t = new URL(req.url).searchParams.get("t") ?? "";
   if (verdict !== "sign" && verdict !== "reject" && verdict !== "edit") return page("<p>verdict must be sign, reject, or edit</p>", 400);
@@ -153,8 +172,23 @@ const ruleByLink = httpAction(async (ctx, req) => {
   }
   const note = await ctx.runMutation(internal.rulings.ruleByLink, { tenantId: tenant._id, proposalId: proposalId as Id<"proposals">, verdict, body });
   return page(`<p>${escapeHtml(note)}</p><p><a href="${back}">Everything waiting →</a></p>`);
-});
+}
 http.route({ pathPrefix: "/rulings/", method: "GET", handler: ruleByLink });
+http.route({
+  pathPrefix: "/rulings/",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, req) => {
+    const origin = ntfyOrigin(req);
+    if (!origin) return new Response(null, { status: 204 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST",
+        "Access-Control-Allow-Headers": req.headers.get("access-control-request-headers") ?? "", Vary: "Origin",
+      },
+    });
+  }),
+});
 http.route({ pathPrefix: "/rulings/", method: "POST", handler: ruleByLink });
 
 // ---- the read-only views --------------------------------------------------------------------------
