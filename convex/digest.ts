@@ -8,10 +8,11 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, type ActionCtx, type MutationCtx } from "./_generated/server";
 import { appendEvent } from "./events";
 import { renderDigest, type DigestItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
+import { notification, ntfyConfig, push } from "./lib/notify/ntfy";
 import { rulingLinks } from "./lib/rulings/token";
 import { pendingFor } from "./proposals";
 import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
@@ -31,7 +32,7 @@ export async function requestDigest(ctx: MutationCtx, tenant: Doc<"tenants">) {
 export type BuiltDigest = {
   digestId: Id<"digests">;
   body: string;
-  items: Array<{ n: number; proposalId: Id<"proposals">; item: DigestItem; grounding?: Doc<"proposals">["grounding"] }>; // item.gap: what the room could not answer
+  items: Array<{ n: number; proposalId: Id<"proposals">; item: DigestItem; grounding?: Doc<"proposals">["grounding"]; pushed: boolean }>; // item.gap: what the room could not answer
 };
 
 export const build = internalMutation({
@@ -63,6 +64,7 @@ export const build = internalMutation({
         proposalId: p._id,
         item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap },
         grounding: p.grounding,
+        pushed: p.pushedAt !== undefined,
       })),
     };
   },
@@ -113,6 +115,33 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+export const markPushed = internalMutation({
+  args: { proposalId: v.id("proposals") },
+  handler: async (ctx, { proposalId }) => {
+    await ctx.db.patch(proposalId, { pushedAt: Date.now() });
+  },
+});
+
+/** Each item not yet on the owner's phone, as its own notification. A failed push is retried next digest. */
+async function pushNew(ctx: ActionCtx, tenant: Doc<"tenants">, built: BuiltDigest): Promise<number> {
+  const cfg = ntfyConfig();
+  if (!cfg) return 0;
+  const base = `${siteUrl()}/rulings`;
+  const surface = await liveSurfaceUrl(tenant.slug);
+  let sent = 0;
+  for (const { proposalId, item, pushed } of built.items) {
+    if (pushed) continue;
+    try {
+      await push(cfg, notification(cfg, item, await rulingLinks(base, rulingSecret(), tenant.slug, proposalId), surface));
+      await ctx.runMutation(internal.digest.markPushed, { proposalId });
+      sent++;
+    } catch (e) {
+      console.error(`ntfy push failed for ${proposalId}: ${e}`);
+    }
+  }
+  return sent;
+}
+
 export const run = internalAction({
   args: { tenantId: v.id("tenants") },
   handler: async (ctx, { tenantId }): Promise<Id<"digests"> | null> => {
@@ -120,6 +149,8 @@ export const run = internalAction({
     if (!built) return null;
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
+    await pushNew(ctx, tenant, built);
+    if (!tenant.channels.inboxId && ntfyConfig()) return built.digestId; // the phone is the channel; no inbox to mail from
     const mail = await digestEmail(tenant, built);
     const ref = await ctx.runAction(internal.mail.sendToOwner, { tenantId, ...mail });
     if (ref) await ctx.runMutation(internal.digest.setRef, { digestId: built.digestId, ref });

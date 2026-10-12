@@ -103,6 +103,7 @@ export default defineSchema({
     deadline: v.optional(v.number()),
     digestNo: v.optional(v.number()),
     digestId: v.optional(v.id("digests")),
+    pushedAt: v.optional(v.number()), // sent to the owner's phone (lib/notify/ntfy.ts); once per item
     edited: v.boolean(),
     sentRef: v.optional(v.string()),
     error: v.optional(v.string()),
