@@ -35,11 +35,12 @@ export const TENANTS: Install[] = [
       webAgent: "web-felaniam@agentmail.to",
     },
     tasks: {
-      clickupListId: "901421901184", listName: "Tony – Tasks", // personal, branded-flow, no lane
+      clickupListId: "901421901184", listName: "Tony – Tasks", // personal, no lane
       teamId: "90141714135",
       byLane: [
         { lane: "wotai", clickupListId: "901422018604", listName: "WotAI — tasks" },
         { lane: "felani.am", clickupListId: "901422018603", listName: "felani.am — tasks" },
+        { lane: "branded-flow", clickupListId: "901422175144", listName: "bnF - Tasks" },
       ],
     },
     channels: {

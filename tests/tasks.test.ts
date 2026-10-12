@@ -89,7 +89,7 @@ describe("intake", () => {
 });
 
 describe("which list", () => {
-  test("a call's items go to their entity's list; no lane, or one without a list, goes to the default", async () => {
+  test("a call's items go to their entity's list; no lane, or personal, goes to the default", async () => {
     const { t, tenant } = await setup();
     await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [
       item({ id: "a", what: "one", lane: "wotai" }), item({ id: "b", what: "two", lane: "felani.am" }),
@@ -98,7 +98,7 @@ describe("which list", () => {
     const by = Object.fromEntries((await tasks(t)).map((p) => [p.body, [p.toName, p.meta.task?.listId]]));
     expect(by).toEqual({
       one: ["WotAI — tasks", "901422018604"], two: ["felani.am — tasks", "901422018603"],
-      three: ["Tony – Tasks", "901421901184"], four: ["Tony – Tasks", "901421901184"],
+      three: ["bnF - Tasks", "901422175144"], four: ["Tony – Tasks", "901421901184"],
     });
   });
 });
