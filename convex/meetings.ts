@@ -55,13 +55,14 @@ const meetingArg = v.object({
   actionItems: v.array(v.object({ who: v.optional(v.string()), what: v.string() })), url: v.optional(v.string()),
 });
 
-/** One meeting's items as the call line hands them in: the owner's own are commitments, the rest are owed. */
+/** One meeting's items as the call line hands them in: the owner's own are commitments, others' are owed, nobody's is just an item. */
 export function itemsOf(m: Meeting, ownerNames: string[], timeZone: string): CallItem[] {
-  const mine = (who?: string) => !who || ownerNames.some((n) => n.length >= 3 && who.toLowerCase().includes(n.toLowerCase()));
+  const mine = (who: string) => ownerNames.some((n) => n.length >= 3 && who.toLowerCase().includes(n.toLowerCase()));
   return m.actionItems.map((a, i) => {
     const due = findDeadline(a.what, m.at, timeZone);
+    const type = !a.who ? "action_item" : mine(a.who) ? "my_commitment" : "owed_to_me";
     return {
-      id: `a${i + 1}`, type: mine(a.who) ? "my_commitment" : "owed_to_me", what: a.what, quote: a.what, who: mine(a.who) ? undefined : a.who,
+      id: `a${i + 1}`, type, what: a.what, quote: a.what, who: type === "owed_to_me" ? a.who : undefined,
       due: due ? new Date(due.deadline).toISOString() : undefined, privacy: "shareable", destination: "clickup.task",
     };
   });

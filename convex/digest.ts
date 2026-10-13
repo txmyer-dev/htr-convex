@@ -10,7 +10,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, type ActionCtx, type MutationCtx } from "./_generated/server";
 import { appendEvent } from "./events";
-import { renderDigest, renderMeeting, renderMeetings, type DigestItem, type MeetingItem } from "./lib/digest/render";
+import { plainOverview, renderDigest, renderMeeting, renderMeetings, type DigestItem, type MeetingItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { hasMail, notifyClaw } from "./adapters/resolve";
 import { noticeFor } from "./lib/notify/ntfy";
@@ -184,7 +184,7 @@ export function meetingNotice(m: MeetingItem, surface: string): Notice {
   const items = m.actionItems.slice(0, 8).map((a) => `• ${a.who ? `${a.who}: ` : ""}${a.what}`).join("\n");
   return {
     title: `Meeting: ${m.title}`.slice(0, 200),
-    message: [m.overview?.slice(0, 600), items].filter(Boolean).join("\n\n").slice(0, 1500) || "No summary yet.",
+    message: [m.overview && plainOverview(m.overview, 600), items].filter(Boolean).join("\n\n").slice(0, 1500) || "No summary yet.",
     tags: ["memo"],
     click: m.url ?? surface,
   };

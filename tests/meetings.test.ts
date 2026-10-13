@@ -73,6 +73,7 @@ describe("the wire", () => {
     ]);
     expect(parseActionItems("1. Do the thing\n2) Another (1:02:03)")).toEqual([{ what: "Do the thing" }, { what: "Another" }]);
     expect(parseActionItems(null)).toEqual([]);
+    expect(parseActionItems("**Speaker 2**\nShare the link (3:10)")).toEqual([{ what: "Share the link" }]); // a placeholder is nobody
   });
 
   test("toMeeting: attendees once each, minutes rounded", () => {
@@ -105,6 +106,13 @@ describe("items and notes", () => {
     ]);
     expect(items[0].due?.slice(0, 10)).toBe("2026-10-16"); // Friday after a Monday meeting
     expect(items[1].due).toBeUndefined();
+    const nobody = itemsOf({ ...m, actionItems: [{ what: "Share the link" }] }, ["Tony"], "UTC");
+    expect(nobody[0]).toMatchObject({ type: "action_item", who: undefined });
+  });
+
+  test("the overview keeps its lines and loses its markdown", () => {
+    const text = renderMeetings([{ ...m, overview: "- **ECC Harness:** structured.\n- **Mods:**  colors" }], "UTC");
+    expect(text).toContain("- ECC Harness: structured.\n- Mods: colors");
   });
 
   test("the Meetings section: when, with whom (not the owner), overview, items, link", () => {

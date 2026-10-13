@@ -65,7 +65,8 @@ export function parseActionItems(text: string | null | undefined): ActionItem[] 
     if (!raw.trim()) continue;
     const head = HEADER.exec(raw);
     if (head) {
-      who = head[1].replace(/[*_]/g, "").trim() || undefined;
+      const name = head[1].replace(/[*_]/g, "").trim();
+      who = name && !/^(speaker|unknown)\s*\d*$/i.test(name) ? name : undefined; // Fireflies' placeholder when it can't tell who spoke
       continue;
     }
     const what = raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").replace(TIMESTAMP, "").replace(/\*\*/g, "").trim();

@@ -135,11 +135,17 @@ export function renderMeeting(m: MeetingItem, timeZone: string, ownerNames: stri
   const others = m.attendees.filter((a) => !ownerNames.some((n) => n.length >= 3 && a.toLowerCase().includes(n.toLowerCase())));
   const withWhom = others.length ? ` with ${oneLine(others.slice(0, 4).join(", "), 80)}${others.length > 4 ? ` +${others.length - 4}` : ""}` : "";
   const lines = [`${m.title} (${when}${m.durationMin ? `, ${m.durationMin} min` : ""})${withWhom}`];
-  if (m.overview) lines.push(oneLine(m.overview, 400));
+  if (m.overview) lines.push(plainOverview(m.overview));
   for (const a of m.actionItems.slice(0, 12)) lines.push(`- ${a.who ? `${a.who}: ` : ""}${oneLine(a.what, 140)}`);
   if (m.actionItems.length > 12) lines.push(`- …and ${m.actionItems.length - 12} more`);
   if (m.url) lines.push(`Notes: ${m.url}`);
   return lines.join("\n");
+}
+
+/** Fireflies writes the overview as markdown bullets: keep the lines, drop the marks, cap it. */
+export function plainOverview(s: string, cap = 700): string {
+  const text = s.replace(/\*\*|__/g, "").split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
+  return text.length <= cap ? text : `${text.slice(0, cap - 1).trimEnd()}…`;
 }
 
 /** The digest's Meetings section; empty when there are none. */
