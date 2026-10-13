@@ -10,11 +10,13 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, type ActionCtx, type MutationCtx } from "./_generated/server";
 import { appendEvent } from "./events";
-import { renderDigest, type DigestItem } from "./lib/digest/render";
+import { renderDigest, renderMeeting, renderMeetings, type DigestItem, type MeetingItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { hasMail, notifyClaw } from "./adapters/resolve";
 import { noticeFor } from "./lib/notify/ntfy";
+import type { Notice } from "./adapters/ports";
 import { rulingLinks } from "./lib/rulings/token";
+import { unreported } from "./meetings";
 import { expire, pendingFor } from "./proposals";
 import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
 
@@ -34,6 +36,7 @@ export type BuiltDigest = {
   digestId: Id<"digests">;
   body: string;
   items: Array<{ n: number; proposalId: Id<"proposals">; item: DigestItem; grounding?: Doc<"proposals">["grounding"]; pushed: boolean }>; // item.gap: what the room could not answer
+  meetings: Array<{ meetingId: Id<"meetings">; item: MeetingItem; pushed: boolean }>; // reported once, in this digest
 };
 
 export const build = internalMutation({
@@ -50,13 +53,14 @@ export const build = internalMutation({
     }
     // High priority leads; otherwise the order they arrived in (sort is stable).
     const pending = (await pendingFor(ctx, tenantId)).sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high"));
-    if (pending.length === 0) return null;
+    const meetings = await unreported(ctx, tenantId);
+    if (pending.length === 0 && meetings.length === 0) return null;
     const now = Date.now();
     const numbered = pending.map((p, i) => [i + 1, p] as const);
-    const body = renderDigest(
-      numbered.map(([n, p]) => [n, p] as [number, DigestItem]),
-      { timeZone: tenant.timeZone, nowMs: now },
-    );
+    const waiting = numbered.length
+      ? renderDigest(numbered.map(([n, p]) => [n, p] as [number, DigestItem]), { timeZone: tenant.timeZone, nowMs: now })
+      : "";
+    const body = [waiting, renderMeetings(meetings, tenant.timeZone, tenant.owner.names)].filter(Boolean).join("\n\n");
     const digestId = await ctx.db.insert("digests", {
       tenantId,
       mapping: numbered.map(([n, p]) => ({ n, proposalId: p._id })),
@@ -65,7 +69,8 @@ export const build = internalMutation({
       weekly,
     });
     for (const [n, p] of numbered) await ctx.db.patch(p._id, { digestId, digestNo: n, ...(weekly ? { lastCallAt: now } : {}) });
-    await appendEvent(ctx, tenantId, "digest.built", { digestId, count: numbered.length });
+    for (const m of meetings) await ctx.db.patch(m._id, { digestId });
+    await appendEvent(ctx, tenantId, "digest.built", { digestId, count: numbered.length, meetings: meetings.length });
     return {
       digestId,
       body,
@@ -76,6 +81,7 @@ export const build = internalMutation({
         grounding: p.grounding,
         pushed: p.pushedAt !== undefined,
       })),
+      meetings: meetings.map((m) => ({ meetingId: m._id, item: m, pushed: m.pushedAt !== undefined })),
     };
   },
 });
@@ -112,13 +118,22 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest, we
     );
   }
   const count = built.items.length;
-  const subject = weekly ? `Last call: ${count} still waiting on you` : `${count} waiting on you`;
-  const lastCall = weekly ? "Last call. Anything you haven't ruled on by next week's email is dropped." : "";
-  const text = `${lastCall ? `${lastCall}\n\n` : ""}${built.body}\n\nOne tap:\n${linkLines.join("\n")}\n\nEverything, live: ${surface}`;
+  const met = built.meetings.length;
+  const notes = met === 1 ? `Meeting notes: ${built.meetings[0].item.title}` : `${met} meeting notes`;
+  const subject = count === 0 ? notes : `${weekly ? `Last call: ${count} still waiting on you` : `${count} waiting on you`}${met ? ` · ${met} meeting${met > 1 ? "s" : ""}` : ""}`;
+  const lastCall = weekly && count ? "Last call. Anything you haven't ruled on by next week's email is dropped." : "";
+  const taps = linkLines.length ? `\n\nOne tap:\n${linkLines.join("\n")}` : "";
+  const text = `${lastCall ? `${lastCall}\n\n` : ""}${built.body}${taps}\n\nEverything, live: ${surface}`;
+  const waiting = count ? built.body.split(/\n\nMeetings \(\d+\)\n/)[0] : "";
+  const meetingHtml = met
+    ? `<h2 style="font-size:1.05rem;margin:24px 0 8px">Meetings</h2>` +
+      built.meetings.map(({ item }) =>
+        `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0;white-space:pre-wrap">${escapeHtml(renderMeeting(item, tenant.timeZone, tenant.owner.names))}</div>`).join("")
+    : "";
   const html =
     `<div style="font-family:system-ui,sans-serif;color:#1d222c;max-width:640px">` +
     (lastCall ? `<p style="font-weight:600">${lastCall}</p>` : "") +
-    `<p style="white-space:pre-wrap">${escapeHtml(built.body)}</p>${cards.join("")}` +
+    (waiting ? `<p style="white-space:pre-wrap">${escapeHtml(waiting)}</p>` : "") + `${cards.join("")}${meetingHtml}` +
     `<p><a href="${surface}">Everything, live →</a></p></div>`;
   return { subject, text, html };
 }
@@ -151,7 +166,28 @@ async function pushNew(ctx: ActionCtx, tenant: Doc<"tenants">, built: BuiltDiges
       console.error(`ntfy push failed for ${proposalId}: ${e}`);
     }
   }
+  for (const { meetingId, item, pushed } of built.meetings) {
+    if (pushed) continue;
+    try {
+      await notify.push(meetingNotice(item, surface));
+      await ctx.runMutation(internal.meetings.markPushed, { meetingId });
+      sent++;
+    } catch (e) {
+      console.error(`ntfy push failed for meeting ${meetingId}: ${e}`);
+    }
+  }
   return sent;
+}
+
+/** A meeting on the phone: the overview and the promises; the full note is in the digest. */
+export function meetingNotice(m: MeetingItem, surface: string): Notice {
+  const items = m.actionItems.slice(0, 8).map((a) => `• ${a.who ? `${a.who}: ` : ""}${a.what}`).join("\n");
+  return {
+    title: `Meeting: ${m.title}`.slice(0, 200),
+    message: [m.overview?.slice(0, 600), items].filter(Boolean).join("\n\n").slice(0, 1500) || "No summary yet.",
+    tags: ["memo"],
+    click: m.url ?? surface,
+  };
 }
 
 export const run = internalAction({

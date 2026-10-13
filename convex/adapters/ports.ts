@@ -5,6 +5,7 @@
 
 import type { ChatMessage } from "../lib/llm/openaiCompat";
 import type { InboundMail } from "../lib/mail/inbound";
+import type { Meeting } from "../lib/meetings/fireflies";
 import type { AgendaTask, NewTask, TaskState } from "../lib/tasks/clickup";
 
 export type Sent = { ref: string; threadId?: string };
@@ -49,4 +50,9 @@ export interface LlmClaw extends Probe {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-export type Port = "mail" | "tasks" | "notify" | "reader" | "llm";
+/** A meeting recorder (Fireflies): reads back a finished meeting's notes. Read-only, so no ruling gates it. */
+export interface MeetingsClaw extends Probe {
+  get(meetingId: string): Promise<Meeting | null>;
+}
+
+export type Port = "mail" | "tasks" | "notify" | "reader" | "llm" | "meetings";

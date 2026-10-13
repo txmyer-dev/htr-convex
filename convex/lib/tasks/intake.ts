@@ -57,7 +57,7 @@ export function description(i: CallItem, session: string): string {
   return [
     `> ${i.quote}`,
     "",
-    `From call \`${session}\` (item ${i.id}${i.lane ? `, lane ${i.lane}` : ""}${i.who ? `, with ${i.who}` : ""}).`,
-    "Proposed by the call line, approved in Hold the Room.",
+    `From ${session.startsWith("fireflies:") ? "meeting" : "call"} \`${session}\` (item ${i.id}${i.lane ? `, lane ${i.lane}` : ""}${i.who ? `, with ${i.who}` : ""}).`,
+    `Proposed by ${session.startsWith("fireflies:") ? "the meeting recorder" : "the call line"}, approved in Hold the Room.`,
   ].join("\n");
 }

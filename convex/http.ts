@@ -6,6 +6,7 @@
 //   GET  /tenants/{slug}/proposals?k=          every proposal and its status, JSON
 //   POST|GET /intake/{slug}/call-items          the call line: items in, their states out; bearer intake key
 //   GET  /intake/{slug}/agenda?tag=raise-<series>  what waits to be raised at that series' next call
+//   POST /intake/{slug}/meetings              Fireflies: a meeting is ready (X-Hub-Signature, or the intake key)
 //   GET  /oauth/google/{slug}/start?k=         the owner connects their Gmail (surface key); Google returns to
 //   GET  /oauth/google/callback                 ...here, exactly this, registered on the OAuth client
 //   GET  /healthz
@@ -18,7 +19,9 @@ import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { finishConsent, readState, startConsent } from "./gmail";
+import { meetingsWebhookSecret } from "./adapters/resolve";
 import { describeGrounding } from "./lib/knowledge/domain";
+import { isReady, parseWebhook, verifySignature } from "./lib/meetings/fireflies";
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
 import { ntfyConfig } from "./lib/notify/ntfy";
@@ -142,6 +145,7 @@ http.route({
 
 const intake = httpAction(async (ctx, req) => {
   const [slug, what] = segments(req.url, "/intake/");
+  if (what === "meetings") return await meetingHook(ctx, req, slug);
   if (what !== "call-items" && what !== "agenda") return text("not found", 404);
   const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!tokenEquals(await intakeKey(slug), bearer)) return text("bad key", 401);
@@ -171,6 +175,28 @@ const intake = httpAction(async (ctx, req) => {
   }));
   return json(await ctx.runMutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: body.session, items }));
 });
+// The meeting recorder's webhook. Fireflies signs with the secret set in its dashboard
+// (FIREFLIES_WEBHOOK_SECRET); anything else that knows the intake key may hand a meeting in too.
+async function meetingHook(ctx: Parameters<Parameters<typeof httpAction>[0]>[0], req: Request, slug: string): Promise<Response> {
+  if (req.method !== "POST") return text("POST a Fireflies webhook", 405);
+  const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
+  if (!tenant) return text("unknown tenant", 404);
+  const body = await req.text();
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const secret = meetingsWebhookSecret(tenant);
+  const signed = secret ? await verifySignature(secret, body, req.headers.get("x-hub-signature")) : false;
+  if (!signed && !(bearer && tokenEquals(await intakeKey(slug), bearer))) return text(secret ? "bad signature" : "FIREFLIES_WEBHOOK_SECRET is not set; use the intake key", 401);
+  let hook: ReturnType<typeof parseWebhook>;
+  try {
+    hook = parseWebhook(JSON.parse(body));
+  } catch {
+    return text("bad json", 400);
+  }
+  if (!hook) return text("need {meeting_id, event} or {meetingId, eventType}", 400);
+  if (!isReady(hook.event)) return json({ ok: true, ignored: hook.event });
+  return json({ ok: true, outcome: await ctx.runMutation(internal.meetings.received, { tenantId: tenant._id, ...hook }) });
+}
+
 http.route({ pathPrefix: "/intake/", method: "GET", handler: intake });
 http.route({ pathPrefix: "/intake/", method: "POST", handler: intake });
 

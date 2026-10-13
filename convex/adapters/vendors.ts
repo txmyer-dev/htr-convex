@@ -2,13 +2,14 @@
 // environment or the tenant: ./resolve.ts hands each one its credentials.
 
 import { AgentMail } from "../lib/mail/agentmail";
+import { getMeeting, whoAmI } from "../lib/meetings/fireflies";
 import { Gmail, type GmailCreds } from "../lib/mail/gmail";
 import { chatCompletion } from "../lib/llm/openaiCompat";
 import { embed } from "../lib/llm/embed";
 import { push } from "../lib/notify/ntfy";
 import { crawl, scrape } from "../lib/reader/firecrawl";
 import { createTask, getTask, openTasksTagged } from "../lib/tasks/clickup";
-import type { LlmClaw, MailClaw, NotifyClaw, ReaderClaw, TaskClaw } from "./ports";
+import type { LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, ReaderClaw, TaskClaw } from "./ports";
 
 type Fetch = typeof fetch;
 
@@ -48,6 +49,16 @@ export function gmail(creds: GmailCreds, address: string | undefined, f: Fetch =
     pull: (sinceMs, seen) => c.pull(sinceMs, seen),
     probe: async () => {
       await c.profile();
+    },
+  };
+}
+
+export function fireflies(apiKey: string, f: Fetch = fetch): MeetingsClaw {
+  return {
+    name: "fireflies",
+    get: (meetingId) => getMeeting(apiKey, meetingId, f),
+    probe: async () => {
+      await whoAmI(apiKey, f);
     },
   };
 }

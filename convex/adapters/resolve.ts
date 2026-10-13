@@ -6,8 +6,8 @@
 import type { Doc } from "../_generated/dataModel";
 import { normalizeBaseUrl } from "../lib/llm/baseUrl";
 import { EMBED_DEFAULT_MODEL } from "../lib/llm/embed";
-import type { LlmClaw, MailClaw, NotifyClaw, Port, ReaderClaw, TaskClaw } from "./ports";
-import { agentMail, clickUp, firecrawl, gmail, ntfy, openAiCompat } from "./vendors";
+import type { LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, Port, ReaderClaw, TaskClaw } from "./ports";
+import { agentMail, clickUp, firecrawl, fireflies, gmail, ntfy, openAiCompat } from "./vendors";
 
 type Tenant = Doc<"tenants">;
 type Fetch = typeof fetch;
@@ -68,6 +68,16 @@ export function llmClaw(tenant: Tenant | null, f: Fetch = fetch): LlmClaw | null
   }, f);
 }
 
+export function meetingsClaw(tenant: Tenant | null, f: Fetch = fetch): MeetingsClaw | null {
+  const key = env(tenant?.adapters?.meetings?.keyEnv ?? "FIREFLIES_API_KEY");
+  return key ? fireflies(key, f) : null;
+}
+
+/** The secret Fireflies signs its webhook with (X-Hub-Signature); unset means only the intake key gets in. */
+export function meetingsWebhookSecret(tenant: Tenant): string | undefined {
+  return env(tenant.adapters?.meetings?.secretEnv ?? "FIREFLIES_WEBHOOK_SECRET");
+}
+
 /** Every claw this tenant has, for the heartbeat. A claw that throws on resolve is reported as down. */
 export function clawsOf(tenant: Tenant, f: Fetch = fetch): Array<{ port: Port; claw: { name: string; probe?: () => Promise<void> } | null; error?: string }> {
   const out: Array<{ port: Port; claw: { name: string; probe?: () => Promise<void> } | null; error?: string }> = [];
@@ -83,5 +93,6 @@ export function clawsOf(tenant: Tenant, f: Fetch = fetch): Array<{ port: Port; c
   tryResolve("notify", () => notifyClaw(tenant, f));
   tryResolve("reader", () => readerClaw(tenant, f));
   tryResolve("llm", () => llmClaw(tenant, f));
+  tryResolve("meetings", () => meetingsClaw(tenant, f));
   return out;
 }

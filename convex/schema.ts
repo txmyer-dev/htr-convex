@@ -66,6 +66,8 @@ export const tenantFields = {
     notify: v.optional(v.object({ kind: v.literal("ntfy"), topic: v.string(), url: v.optional(v.string()), tokenEnv: v.optional(v.string()) })),
     tasks: v.optional(v.object({ kind: v.literal("clickup"), tokenEnv: v.optional(v.string()) })),
     reader: v.optional(v.object({ kind: v.literal("firecrawl"), keyEnv: v.optional(v.string()) })),
+    // The meeting recorder (meetings.ts): its API key, and the secret it signs webhooks with.
+    meetings: v.optional(v.object({ kind: v.literal("fireflies"), keyEnv: v.optional(v.string()), secretEnv: v.optional(v.string()) })),
     llm: v.optional(v.object({
       kind: v.literal("openai-compat"), baseUrl: v.optional(v.string()), model: v.optional(v.string()),
       embedModel: v.optional(v.string()), keyEnv: v.optional(v.string()),
@@ -99,6 +101,26 @@ export default defineSchema({
     error: v.optional(v.string()),
     at: v.number(),
   }).index("by_tenant_port", ["tenantId", "port"]),
+
+  // A finished meeting, read back from the recorder (meetings.ts). Its action items also become task
+  // proposals when the tenant has a task list; the note itself goes out once, in the next digest.
+  meetings: defineTable({
+    tenantId: v.id("tenants"),
+    vendor: v.literal("fireflies"),
+    meetingId: v.string(),
+    title: v.string(),
+    at: v.number(),
+    durationMin: v.optional(v.number()),
+    attendees: v.array(v.string()),
+    overview: v.optional(v.string()),
+    bullets: v.optional(v.string()),
+    actionItems: v.array(v.object({ who: v.optional(v.string()), what: v.string() })),
+    url: v.optional(v.string()),
+    digestId: v.optional(v.id("digests")), // the digest it went out in; absent = still to report
+    pushedAt: v.optional(v.number()),
+  })
+    .index("by_tenant_meeting", ["tenantId", "meetingId"])
+    .index("by_tenant_digest", ["tenantId", "digestId"]),
 
   // Where each pulled mailbox (Gmail) last read up to. One row per tenant, moved after every successful pull.
   mailCursors: defineTable({ tenantId: v.id("tenants"), at: v.number() }).index("by_tenant", ["tenantId"]),

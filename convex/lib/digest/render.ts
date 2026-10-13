@@ -116,3 +116,34 @@ export function segments(text: string, limit = 160): string[] {
   if (cur.trim()) out.push(cur);
   return out.filter((s) => s.trim()).map((s) => s.replace(/^\n+|\n+$/g, ""));
 }
+
+/** The slice of a meeting row the digest needs (meetings.ts). */
+export type MeetingItem = {
+  title: string;
+  at: number;
+  durationMin?: number | null;
+  attendees: string[];
+  overview?: string | null;
+  actionItems: Array<{ who?: string | null; what: string }>;
+  url?: string | null;
+};
+
+/** One meeting: when and with whom, what it was about, and what was promised. */
+export function renderMeeting(m: MeetingItem, timeZone: string, ownerNames: string[] = []): string {
+  const p = localParts(m.at, timeZone);
+  const when = `${p.weekdayShort} ${p.monthShort} ${p.day}, ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+  const others = m.attendees.filter((a) => !ownerNames.some((n) => n.length >= 3 && a.toLowerCase().includes(n.toLowerCase())));
+  const withWhom = others.length ? ` with ${oneLine(others.slice(0, 4).join(", "), 80)}${others.length > 4 ? ` +${others.length - 4}` : ""}` : "";
+  const lines = [`${m.title} (${when}${m.durationMin ? `, ${m.durationMin} min` : ""})${withWhom}`];
+  if (m.overview) lines.push(oneLine(m.overview, 400));
+  for (const a of m.actionItems.slice(0, 12)) lines.push(`- ${a.who ? `${a.who}: ` : ""}${oneLine(a.what, 140)}`);
+  if (m.actionItems.length > 12) lines.push(`- …and ${m.actionItems.length - 12} more`);
+  if (m.url) lines.push(`Notes: ${m.url}`);
+  return lines.join("\n");
+}
+
+/** The digest's Meetings section; empty when there are none. */
+export function renderMeetings(ms: MeetingItem[], timeZone: string, ownerNames: string[] = []): string {
+  if (ms.length === 0) return "";
+  return [`Meetings (${ms.length})`, "", ms.map((m) => renderMeeting(m, timeZone, ownerNames)).join("\n\n")].join("\n");
+}

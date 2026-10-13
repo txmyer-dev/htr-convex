@@ -11,7 +11,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
 import { taskClaw } from "./adapters/resolve";
@@ -48,45 +48,51 @@ export const receiveCallItems = internalMutation({
   handler: async (ctx, { tenantId, session, items }): Promise<IntakeOutcome> => {
     const tenant = await ctx.db.get(tenantId);
     if (!tenant) throw new Error("unknown tenant");
-    if (!tenant.tasks) throw new Error(`tenant ${tenant.slug} has no task list configured`);
-    const out: IntakeOutcome = { proposed: 0, already: 0, duplicate: 0, refused: {} };
-    const open = (await withStatus(ctx, tenantId, ...OPEN)).filter((p) => p.kind === "task");
-    const openSame = new Map(open.map((p) => [p.meta.task?.sameness ?? "", p]));
-    for (const i of items as CallItem[]) {
-      const verdict = accept(i);
-      if (!verdict.take) {
-        out.refused[verdict.why] = (out.refused[verdict.why] ?? 0) + 1;
-        continue;
-      }
-      const sourceId = `${session}:${i.id}`;
-      const same = sameness(i.what);
-      const twin = openSame.get(same);
-      if (twin && twin.sourceId !== sourceId) {
-        out.duplicate++;
-        await appendEvent(ctx, tenantId, "task.repeated", { proposalId: twin._id, session, itemId: i.id });
-        continue;
-      }
-      const before = await ctx.db.query("proposals").withIndex("by_tenant_source", (q) =>
-        q.eq("tenantId", tenantId).eq("sourceKind", "call_item").eq("sourceId", sourceId)).unique();
-      if (before) {
-        out.already++;
-        continue;
-      }
-      const list = listFor(tenant.tasks, i.lane);
-      const tag = i.destination === "clickup.agenda" ? agendaTag(i.series!) : undefined;
-      const p = await propose(ctx, {
-        tenantId, kind: "task", toAddress: "clickup", toName: tag ? `next ${i.series} (${list.listName})` : list.listName,
-        body: i.what.trim(), basis: [i.quote], sourceKind: "call_item", sourceId, deadline: undefined,
-        meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, listId: list.listId, tag, session, itemId: i.id, sameness: same } },
-      });
-      openSame.set(same, p);
-      out.proposed++;
-    }
-    await appendEvent(ctx, tenantId, "call.items", { session, ...out });
-    if (out.proposed) await requestDigest(ctx, tenant);
-    return out;
+    return await takeCallItems(ctx, tenant, session, items as CallItem[]);
   },
 });
+
+/** Items in, as pending task proposals: the call line's path, and the meeting recorder's (meetings.ts). */
+export async function takeCallItems(ctx: MutationCtx, tenant: Doc<"tenants">, session: string, items: CallItem[]): Promise<IntakeOutcome> {
+  const tenantId = tenant._id;
+  if (!tenant.tasks) throw new Error(`tenant ${tenant.slug} has no task list configured`);
+  const out: IntakeOutcome = { proposed: 0, already: 0, duplicate: 0, refused: {} };
+  const open = (await withStatus(ctx, tenantId, ...OPEN)).filter((p) => p.kind === "task");
+  const openSame = new Map(open.map((p) => [p.meta.task?.sameness ?? "", p]));
+  for (const i of items) {
+    const verdict = accept(i);
+    if (!verdict.take) {
+      out.refused[verdict.why] = (out.refused[verdict.why] ?? 0) + 1;
+      continue;
+    }
+    const sourceId = `${session}:${i.id}`;
+    const same = sameness(i.what);
+    const twin = openSame.get(same);
+    if (twin && twin.sourceId !== sourceId) {
+      out.duplicate++;
+      await appendEvent(ctx, tenantId, "task.repeated", { proposalId: twin._id, session, itemId: i.id });
+      continue;
+    }
+    const before = await ctx.db.query("proposals").withIndex("by_tenant_source", (q) =>
+      q.eq("tenantId", tenantId).eq("sourceKind", "call_item").eq("sourceId", sourceId)).unique();
+    if (before) {
+      out.already++;
+      continue;
+    }
+    const list = listFor(tenant.tasks, i.lane);
+    const tag = i.destination === "clickup.agenda" ? agendaTag(i.series!) : undefined;
+    const p = await propose(ctx, {
+      tenantId, kind: "task", toAddress: "clickup", toName: tag ? `next ${i.series} (${list.listName})` : list.listName,
+      body: i.what.trim(), basis: [i.quote], sourceKind: "call_item", sourceId, deadline: undefined,
+      meta: { task: { type: i.type, due: i.due, who: i.who, lane: i.lane, listId: list.listId, tag, session, itemId: i.id, sameness: same } },
+    });
+    openSame.set(same, p);
+    out.proposed++;
+  }
+  await appendEvent(ctx, tenantId, "call.items", { session, ...out });
+  if (out.proposed) await requestDigest(ctx, tenant);
+  return out;
+}
 
 export type ItemState = {
   session: string; itemId: string; what: string; type: string; due?: string; who?: string;
