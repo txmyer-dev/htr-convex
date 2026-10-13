@@ -136,6 +136,7 @@ export function renderMeeting(m: MeetingItem, timeZone: string, ownerNames: stri
   const withWhom = others.length ? ` with ${oneLine(others.slice(0, 4).join(", "), 80)}${others.length > 4 ? ` +${others.length - 4}` : ""}` : "";
   const lines = [`${m.title} (${when}${m.durationMin ? `, ${m.durationMin} min` : ""})${withWhom}`];
   if (m.overview) lines.push(plainOverview(m.overview));
+  if (m.actionItems.length) lines.push("Action items:");
   for (const a of m.actionItems.slice(0, 12)) lines.push(`- ${a.who ? `${a.who}: ` : ""}${oneLine(a.what, 140)}`);
   if (m.actionItems.length > 12) lines.push(`- …and ${m.actionItems.length - 12} more`);
   if (m.url) lines.push(`Notes: ${m.url}`);
