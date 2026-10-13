@@ -31,7 +31,7 @@ Ben's beta MVP, due **2026-10-30**.*
   Fireflies, the receptionist, the web agent). Enters only through an `/intake/{slug}/<source>`
   route or a claw, never around them.
 
-## Phase 1 — Fold Python's rules into the core (≈ 10/14–10/15)
+## Phase 1 — Fold Python's rules into the core (≈ 10/14–10/15) — DONE 2026-10-13 (38176cb)
 
 Pure-function work, no schema changes. Each item lands with the Python test that pins it.
 
@@ -53,7 +53,11 @@ Pure-function work, no schema changes. Each item lands with the Python test that
 
 **Done when:** 149 + new tests green, `npm run typecheck` clean, reclassify run on prod data.
 
-## Phase 2 — The claw layer (≈ 10/16–10/18)
+## Phase 2 — The claw layer (≈ 10/16–10/18) — DONE 2026-10-13 (74e729f)
+
+*Left outside the claws on purpose:* AgentMail inbox/webhook provisioning (`mail.provision`, setup-time and
+adapter-specific), the demo front door (`demo.ts`, off the install path in phase 3), and the ntfy CORS origin check
+on ruling links (`http.ts`, reads the deployment-wide ntfy URL).
 
 Wrap, don't rewrite: `lib/*` modules and their tests stay as they are.
 
