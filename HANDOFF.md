@@ -1,16 +1,17 @@
 # Handoff — one HTR: core → claws → extensions
 
-*Written 2026-10-13 at the end of a Claude Code session on Tony's Windows laptop. Work moves to
-**hostvps**. Read this, then `docs/merge-plan.md` (the approved plan), then start phase 3.*
+*Started 2026-10-13 on Tony's Windows laptop (phases 1–2); updated the same day on **hostvps**
+after phase 3's build. Read this, then `docs/merge-plan.md` (the approved plan).*
 
 ## Where things stand
 
 | | |
 |---|---|
 | Branch | work on **`core-merge`**; `main` is fast-forwarded to it after each phase |
-| Tests | `npm test`: **162 passing**, offline, ~3 s. `npm run typecheck`: clean |
-| Live deployment | Convex **`famous-spider-906`** (a *dev* deployment, team tony-myers, project htr-convex), which is the live one. Phases 1–2 are deployed there |
-| Plan | `docs/merge-plan.md`, approved by Tony 2026-10-13. Phases 1 and 2 are **done** |
+| Tests | `npm test`: **212 passing**, offline. `npm run typecheck`: clean. Gate commits on the test **exit status** |
+| Live deployment | Convex **`famous-spider-906`** (a *dev* deployment, team tony-myers, project htr-convex), which is the live one. Phases 1–2 are deployed there; **phase 3 is not** (deploy when the phase is done) |
+| Test backend | Self-hosted Convex on hostvps: `/root/convex-selfhost-test` (compose), public at `https://htr-test.felaniam.cloud` (Traefik file `/etc/dokploy/traefik/dynamic/htr-test.yml`). Deployed from the detached worktree `/root/htr-selfhost`, whose `.env.local` points only at it. Test tenant `tony-gmail-test` (Gmail connected; no ntfy topic, by Tony's request) |
+| Plan | `docs/merge-plan.md`, approved by Tony 2026-10-13. Phases 1–2 **done**; phase 3 **built**, rehearsal pending |
 | Deadline | Ben Hidalgo's beta, **2026-10-30** (Ben installs 10/28–10/30) |
 
 ### Owner rulings behind this (in Tony's vault, `~/wiki/04-ANCHORS/_decisions.md`)
@@ -52,55 +53,47 @@
   - `demo.ts` (the front door; phase 3 takes it off the install path)
   - the ntfy CORS check in `http.ts`
 
-## Gap found on live (not caused by this work)
+## Phase 3, built on hostvps (2026-10-13)
 
-`npx convex env list` on famous-spider-906 has **no `CLICKUP_API_TOKEN` and no `HTR_NTFY_TOPIC`**. So the
-10/11–12 features (call items → ClickUp, per-item phone pushes) have never fired on live. Setting the two env
-vars turns them on, and the heartbeat will then watch them. **Ask Tony before setting them.**
+All on `core-merge`, pushed. Each verified on the test backend against Tony's real accounts.
 
-## Next: phase 3 (Ben's MVP as a self-hosted install)
+1. **Self-hosted Convex verified:** vector search, crons, scheduler, file storage, static hosting and
+   http actions all work on the open-source backend (pinned in `compose.yml` to build `5c7cb5b`).
+2. **Gmail claw** (`lib/mail/gmail.ts`, `gmail.ts`): a 2-minute pull cron, threaded replies, consent
+   as an http route (`gmail:connectUrl` → `/oauth/google/{slug}/start` → `/oauth/google/callback`),
+   and a grant kept on `tenant.channels.gmail`. Verified: connect, pull, classify, threaded reply.
+   OAuth client: GCP project `hold-the-room`, **published "In production"**. Testing mode expires
+   grants after 7 days, which is what killed Python HTR's token (`invalid_grant`).
+3. **Priority** (`lib/reader/priority.ts`): scored at intake. High (≥ 6) → `mail.alertOwner` ntfy
+   push right away, or when `quietHours` end. The digest leads with it (`‼`). Also fixed:
+   `digest.run` skipped the email for tenants without an AgentMail inbox (`hasMail`).
+4. **Fireflies extension** (`lib/meetings/fireflies.ts`, `meetings.ts`): `POST /intake/{slug}/meetings`
+   (X-Hub-Signature or the intake key) → read over GraphQL → `meetings` row. Action items go through
+   `tasks.takeCallItems` when there's a task list, plus a Meetings section in the digest and a push.
+   Verified with a real meeting.
+5. **Packaging:** `compose.yml` + `Caddyfile`, `npm run setup` / `npm run update` (`scripts/`),
+   `install:create` / `install:status`, `migrations.ts`, `INSTALL.md`. The hackathon front door is
+   opt-in (`VITE_HTR_FRONT_DOOR=1`, set in Tony's `.env.local`); otherwise `/` is a closed door. Ben
+   never runs `install:apply` (Tony's `TENANTS`). The demo pool stays closed while `HTR_DEMO_POOL`
+   is unset.
 
-Full spec in `docs/merge-plan.md` § Phase 3. Do it in this order:
+**Live env:** `CLICKUP_API_TOKEN` and `HTR_NTFY_TOPIC` (`htr-tony-e1d4107c42c3a0f0`) were set on
+famous-spider-906 with Tony's OK. The heartbeat shows all five claws up.
 
-1. **Verify self-hosted Convex first (day one; it is the one real risk).** On hostvps, run the open-source
-   Convex backend + dashboard in Docker. Deploy this repo to it (`npx convex deploy` against the self-hosted
-   URL and admin key). Confirm every feature HTR uses works there:
-   - vector search (`chunks.by_embedding`)
-   - crons and the scheduler
-   - file storage and the `@convex-dev/static-hosting` component
-   - http actions
+## Next
 
-   If any of these fails, stop and tell Tony before building more.
-2. **Gmail mail adapter** (a new `MailClaw` behind `adapters.mail: { kind: "gmail" }`). Port from Python
-   `HTR/src/htr/adapters/mail_gmail.py` and `gmail_auth.py` on the `main` branch:
-   - OAuth consent as an http route; the redirect must match what Google was told, byte for byte
-   - scopes `gmail.readonly` + `gmail.send`
-   - a pull cron that excludes the Promotions, Social, Updates and Forums categories
-   - skip the owner's own mail; dedupe by provider id
-   - send in thread (`threadId`, In-Reply-To/References)
-
-   Each user brings their own Google Cloud OAuth client in testing mode.
-3. **Priority**: a score from what the reader knows (waiting-on-you, deadline, known contact, a thread with a
-   prior ruling). High priority → an immediate push.
-4. **Fireflies extension** (a standard add-on for every install): `POST /intake/{slug}/meetings` → action
-   items into the existing call-items path, plus a meeting-note record → a "Meetings" section in the digest.
-5. **Packaging**:
-   - `compose.yml`: self-hosted Convex + dashboard + Caddy
-   - `npm run setup` (**Node**, interactive):
-     - asks for domain, owner email, LLM, Fireflies, ntfy, and optionally ClickUp, Firecrawl,
-       **Composio, treg, jev** (each user brings their own)
-     - walks through the Google OAuth client and stores the refresh token
-     - writes Convex env, creates the tenant, health-checks every claw
-   - `npm run update`: pull, deploy, migrate, health check
-   - `INSTALL.md`
-   - strip Tony-specific code from the install path: demo pool, hackathon front door, the hard-coded `tony`
-     slug (also in `call-listener/cl/htr.py:15`)
-6. **Done when** someone other than Tony goes from `git clone` on a fresh VPS to a real email and a real
-   meeting reaching his phone and a ruling, using only `INSTALL.md`. Ben installs from this repo directly or
-   from a fork.
+1. **Rehearse `INSTALL.md` on a throwaway VPS** (the "done when" in the plan). Ports 80/443 must be
+   free, so hostvps (Traefik) can't host it.
+2. Deploy phase 3 to live and fast-forward `main`, once the rehearsal passes and Tony agrees.
+3. `call-listener/cl/htr.py:15` still hard-codes the `tony` slug (that's in the call-listener repo).
+4. Composio / treg / jev: setup stores the keys, but nothing probes or uses them yet (phase 5).
+5. Rulings by email reply don't work for Gmail installs (own mail is excluded from the pull).
+   Rulings by ntfy and the web page do.
+6. A weekly-digest owner gets meeting notes as pushes, not in the Sunday email.
 
 Phase 4 (retire Python HTR on hostvps) can run any time. Its teardown list is in the plan.
 **Confirm each destructive step with Tony.** Park the Retell number; don't delete it.
+Python HTR's Gmail token is dead anyway.
 
 ## How to work here
 

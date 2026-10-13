@@ -10,6 +10,8 @@ tap on Send. What you signed goes out as you, in their thread. What you edited i
 own words. Nothing goes out otherwise. A draft you never rule on expires: the counterparty is
 told a reply is coming, and the item heads the next digest.
 
+**Run your own:** [INSTALL.md](INSTALL.md) — your server, your Gmail, your keys; `npm run setup` does the rest.
+
 **Live:** [famous-spider-906.convex.site](https://famous-spider-906.convex.site) — the front door
 itself; take an inbox and run the whole loop in thirty seconds. **Who it's for:** a bakery, a clinic
 front desk, a contractor, a small law office — anyone who lives in their inbox, no developer required.
