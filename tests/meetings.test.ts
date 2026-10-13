@@ -119,7 +119,7 @@ describe("items and notes", () => {
     const text = renderMeetings([m], "America/New_York", ["Tony", "Tony Myers"]);
     expect(text).toContain("Meetings (1)");
     expect(text).toContain("Ben / Tony weekly (Mon Oct 12, 10:00, 32 min) with Ben Hidalgo");
-    expect(text).toContain("Action items:\n- Send Ben the revised proposal by Friday");
+    expect(text).toContain("Action items:\n- Tony Myers: Send Ben the revised proposal by Friday");
     expect(text).toContain("- Ben Hidalgo: Review the contract with legal");
     expect(text).toContain("Notes: https://app.fireflies.ai/view/FF123");
     expect(renderMeetings([], "UTC")).toBe("");
