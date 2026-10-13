@@ -14,6 +14,11 @@ type Fetch = typeof fetch;
 
 const env = (name: string | undefined) => (name ? process.env[name] || undefined : undefined);
 
+/** The tenant has a mailbox to send from: an AgentMail inbox, or the owner's Gmail. */
+export function hasMail(tenant: Tenant): boolean {
+  return Boolean(tenant.channels.inboxId) || tenant.adapters?.mail?.kind === "gmail";
+}
+
 export function mailClaw(tenant: Tenant, f: Fetch = fetch): MailClaw {
   const a = tenant.adapters?.mail;
   if (a?.kind === "gmail") {
@@ -73,7 +78,7 @@ export function clawsOf(tenant: Tenant, f: Fetch = fetch): Array<{ port: Port; c
       out.push({ port, claw: null, error: String(e instanceof Error ? e.message : e) });
     }
   };
-  if (tenant.channels.inboxId || tenant.adapters?.mail?.kind === "gmail") tryResolve("mail", () => mailClaw(tenant, f));
+  if (hasMail(tenant)) tryResolve("mail", () => mailClaw(tenant, f));
   tryResolve("tasks", () => taskClaw(tenant, f));
   tryResolve("notify", () => notifyClaw(tenant, f));
   tryResolve("reader", () => readerClaw(tenant, f));

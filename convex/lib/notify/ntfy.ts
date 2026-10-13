@@ -17,7 +17,7 @@ export function ntfyConfig(): NtfyConfig | null {
   return { url: (process.env.HTR_NTFY_URL ?? "https://ntfy.sh").replace(/\/+$/, ""), topic, token: process.env.HTR_NTFY_TOKEN };
 }
 
-export type PushItem = { kind?: string; toName?: string | null; toAddress: string; body: string; basis: string[] };
+export type PushItem = { kind?: string; toName?: string | null; toAddress: string; body: string; basis: string[]; priority?: string | null };
 export type PushLinks = { sign: string; reject: string; edit: string };
 
 /** The notice for one waiting item, in any notify claw's shape (adapters/ports.ts Notice). */
@@ -28,6 +28,7 @@ export function noticeFor(item: PushItem, links: PushLinks, surface: string): No
     title: task ? `Task → ${item.toName}` : `Draft to ${item.toName || item.toAddress}`,
     message: (item.body + quote).slice(0, 1500),
     tags: [task ? "pushpin" : "envelope"],
+    ...(item.priority === "high" ? { priority: 4 } : {}),
     click: surface,
     actions: [
       { action: "http", label: task ? "Add task" : "Send", url: links.sign, method: "POST", clear: true },

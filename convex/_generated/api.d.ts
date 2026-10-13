@@ -42,6 +42,7 @@ import type * as lib_proposals_timeline from "../lib/proposals/timeline.js";
 import type * as lib_reader_automated from "../lib/reader/automated.js";
 import type * as lib_reader_deadline from "../lib/reader/deadline.js";
 import type * as lib_reader_firecrawl from "../lib/reader/firecrawl.js";
+import type * as lib_reader_priority from "../lib/reader/priority.js";
 import type * as lib_reader_waiting from "../lib/reader/waiting.js";
 import type * as lib_rulings_parse from "../lib/rulings/parse.js";
 import type * as lib_rulings_token from "../lib/rulings/token.js";
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reader/automated": typeof lib_reader_automated;
   "lib/reader/deadline": typeof lib_reader_deadline;
   "lib/reader/firecrawl": typeof lib_reader_firecrawl;
+  "lib/reader/priority": typeof lib_reader_priority;
   "lib/reader/waiting": typeof lib_reader_waiting;
   "lib/rulings/parse": typeof lib_rulings_parse;
   "lib/rulings/token": typeof lib_rulings_token;

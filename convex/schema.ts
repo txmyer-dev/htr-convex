@@ -12,6 +12,7 @@ import { STATUSES } from "./lib/proposals/lifecycle";
 export const status = v.union(...STATUSES.map((s) => v.literal(s)));
 export const channel = v.union(v.literal("email"), v.literal("sms"), v.literal("call"));
 export const direction = v.union(v.literal("in"), v.literal("out"));
+export const priorityLevel = v.union(v.literal("high"), v.literal("normal"), v.literal("low"));
 
 /** The install block. One document per client; adding a client is adding a document. */
 export const tenantFields = {
@@ -118,6 +119,8 @@ export default defineSchema({
       references: v.optional(v.string()),
       name: v.optional(v.string()),
       automated: v.optional(v.boolean()),
+      // lib/reader/priority.ts, scored as it landed: high rang the owner's phone before any draft.
+      priority: v.optional(v.object({ score: v.number(), level: priorityLevel, reasons: v.array(v.string()) })),
     }),
   })
     .index("by_tenant_at", ["tenantId", "at"])
@@ -140,6 +143,7 @@ export default defineSchema({
     deadline: v.optional(v.number()),
     digestNo: v.optional(v.number()),
     digestId: v.optional(v.id("digests")),
+    priority: v.optional(priorityLevel), // the source message's (lib/reader/priority.ts); high leads the digest
     pushedAt: v.optional(v.number()), // sent to the owner's phone (lib/notify/ntfy.ts); once per item
     lastCallAt: v.optional(v.number()), // was in a weekly digest; still waiting at the next one = expired
     edited: v.boolean(),

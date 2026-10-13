@@ -51,6 +51,7 @@ export type ProposeArgs = {
   meta?: Proposal["meta"];
   grounding?: Proposal["grounding"];
   gap?: string;
+  priority?: Proposal["priority"];
 };
 
 /** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId). */
@@ -74,6 +75,7 @@ export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposa
     edited: false,
     grounding: a.grounding,
     gap: a.gap,
+    priority: a.priority,
     meta: a.meta ?? {},
     createdAt: Date.now(),
   });

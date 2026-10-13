@@ -12,7 +12,7 @@ import { internalAction, internalMutation, type ActionCtx, type MutationCtx } fr
 import { appendEvent } from "./events";
 import { renderDigest, type DigestItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
-import { notifyClaw } from "./adapters/resolve";
+import { hasMail, notifyClaw } from "./adapters/resolve";
 import { noticeFor } from "./lib/notify/ntfy";
 import { rulingLinks } from "./lib/rulings/token";
 import { expire, pendingFor } from "./proposals";
@@ -48,7 +48,8 @@ export const build = internalMutation({
         if ((await expire(ctx, p._id)) !== null) await appendEvent(ctx, tenantId, "proposal.last_call_passed", { proposalId: p._id });
       }
     }
-    const pending = await pendingFor(ctx, tenantId);
+    // High priority leads; otherwise the order they arrived in (sort is stable).
+    const pending = (await pendingFor(ctx, tenantId)).sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high"));
     if (pending.length === 0) return null;
     const now = Date.now();
     const numbered = pending.map((p, i) => [i + 1, p] as const);
@@ -71,7 +72,7 @@ export const build = internalMutation({
       items: numbered.map(([n, p]) => ({
         n,
         proposalId: p._id,
-        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap },
+        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap, priority: p.priority },
         grounding: p.grounding,
         pushed: p.pushedAt !== undefined,
       })),
@@ -161,7 +162,7 @@ export const run = internalAction({
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
     await pushNew(ctx, tenant, built);
-    if (!tenant.channels.inboxId && notifyClaw(tenant)) return built.digestId; // the phone is the channel; no inbox to mail from
+    if (!hasMail(tenant) && notifyClaw(tenant)) return built.digestId; // the phone is the channel; no mailbox to mail from
     if (tenant.owner.weeklyDigest && !weekly) return built.digestId; // pushes now, the email on its weekly day
     const mail = await digestEmail(tenant, built, weekly);
     const ref = await ctx.runAction(internal.mail.sendToOwner, { tenantId, ...mail });

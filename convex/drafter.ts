@@ -221,7 +221,7 @@ export const record = internalMutation({
     const kind = msg.channel === "sms" ? "sms" : "email";
     const p = await propose(ctx, {
       tenantId: msg.tenantId, toAddress: msg.fromAddress, toName, body, basis, deadline, kind,
-      sourceKind: msg.channel, sourceId: msg._id, grounding, gap,
+      sourceKind: msg.channel, sourceId: msg._id, grounding, gap, priority: msg.meta.priority?.level,
       meta: { subject: msg.meta.subject, threadId: msg.threadId, messageId: msg.vendorRef, references: msg.meta.references },
     });
     // The newest message is the one to answer; older pending drafts to this address are moot.

@@ -8,20 +8,21 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { action, internalAction, internalMutation, type MutationCtx } from "./_generated/server";
+import { action, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { appendEvent, recordAction } from "./events";
-import { mailClaw } from "./adapters/resolve";
-import type { MailClaw, Sent } from "./adapters/ports";
+import { mailClaw, notifyClaw } from "./adapters/resolve";
+import type { MailClaw, Notice, Sent } from "./adapters/ports";
 import { AgentMail } from "./lib/mail/agentmail";
 import { stripFooter, type InboundMail } from "./lib/mail/inbound";
 import { looksAutomated } from "./lib/reader/automated";
+import { alertAt, score } from "./lib/reader/priority";
 import { acknowledgeSite } from "./facts";
 import { siteToken } from "./lib/rulings/token";
 import { SITE_HEADER } from "./lib/site/publish";
-import { supersede } from "./proposals";
+import { bySource, supersede } from "./proposals";
 import { handleOwnerReply } from "./rulings";
 import { dispatchTask } from "./tasks";
-import { siteSecret, siteUrl } from "./surface";
+import { liveSurfaceUrl, siteSecret, siteUrl } from "./surface";
 
 export function client(): AgentMail {
   const apiKey = process.env.AGENTMAIL_API_KEY;
@@ -84,20 +85,79 @@ export async function receiveMail(ctx: MutationCtx, tenant: Doc<"tenants">, m: I
   }
 
   const automated = vouched ? false : looksAutomated({ fromAddress: m.fromAddress, subject: m.subject, text: m.text, headers: m.headers });
-  const messageId = await ctx.db.insert("messages", {
-    tenantId: tenant._id, channel: "email", direction: "in", fromAddress: m.fromAddress, toAddress: m.to[0],
-    body: m.text.slice(0, 8000), at: m.receivedAt, vendorRef: m.id, threadId: m.threadId,
-    meta: { subject: m.subject, messageId: m.messageId, references: m.references, name: m.fromName, automated },
-  });
   const contact = await ctx.db
     .query("contacts")
     .withIndex("by_tenant_address", (q) => q.eq("tenantId", tenant._id).eq("address", m.fromAddress))
     .unique();
+  const priority = score({
+    subject: m.subject, text: m.text, automated, ownerNames: tenant.owner.names, priorFromSender: contact?.count ?? 0,
+    ...(await threadSignals(ctx, tenant._id, m.threadId)), nowMs: Date.now(), timeZone: tenant.timeZone,
+  });
+  const messageId = await ctx.db.insert("messages", {
+    tenantId: tenant._id, channel: "email", direction: "in", fromAddress: m.fromAddress, toAddress: m.to[0],
+    body: m.text.slice(0, 8000), at: m.receivedAt, vendorRef: m.id, threadId: m.threadId,
+    meta: { subject: m.subject, messageId: m.messageId, references: m.references, name: m.fromName, automated, priority },
+  });
   if (contact) await ctx.db.patch(contact._id, { name: m.fromName ?? contact.name, lastSeenAt: m.receivedAt, count: contact.count + 1 });
   else await ctx.db.insert("contacts", { tenantId: tenant._id, address: m.fromAddress, name: m.fromName, lastSeenAt: m.receivedAt, count: 1 });
   if (automated) return "automated";
+  if (priority.level === "high") {
+    const at = alertAt(Date.now(), tenant.owner.quietHours, tenant.timeZone);
+    await ctx.scheduler.runAt(at, internal.mail.alertOwner, { messageId });
+    await appendEvent(ctx, tenant._id, "mail.priority", { messageId, score: priority.score, reasons: priority.reasons, alertAt: at });
+  }
   await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId });
   return "drafting";
+}
+
+/** What the thread says before this message: did the owner write in it, and how did they rule on its drafts. */
+async function threadSignals(ctx: MutationCtx, tenantId: Id<"tenants">, threadId: string | undefined) {
+  const out = { repliesToOwner: false, threadRulings: { agreed: 0, skipped: 0 } };
+  if (!threadId) return out;
+  const thread = await ctx.db.query("messages").withIndex("by_tenant_thread", (q) => q.eq("tenantId", tenantId).eq("threadId", threadId)).take(50);
+  for (const msg of thread) {
+    if (msg.direction === "out") {
+      out.repliesToOwner = true;
+      continue;
+    }
+    const p = await bySource(ctx, tenantId, msg.channel, msg._id);
+    if (!p) continue;
+    if (p.status === "signed" || p.status === "sending" || p.status === "sent") out.threadRulings.agreed++;
+    else if (p.status === "rejected") out.threadRulings.skipped++;
+  }
+  return out;
+}
+
+/** High priority: the owner's phone now (or when quiet hours end), before any draft exists. */
+export const alertOwner = internalAction({
+  args: { messageId: v.id("messages") },
+  handler: async (ctx, { messageId }): Promise<boolean> => {
+    const msg = await ctx.runQuery(internal.mail.message, { messageId });
+    if (!msg) return false;
+    const tenant = await ctx.runQuery(internal.tenants.get, { tenantId: msg.tenantId });
+    const notify = tenant && notifyClaw(tenant);
+    if (!tenant || !notify) return false;
+    await notify.push(priorityNotice(msg, await liveSurfaceUrl(tenant.slug)));
+    await ctx.runMutation(internal.drafter.noteEvent, { tenantId: tenant._id, kind: "mail.alerted", payload: { messageId } });
+    return true;
+  },
+});
+
+export const message = internalQuery({
+  args: { messageId: v.id("messages") },
+  handler: async (ctx, { messageId }) => await ctx.db.get(messageId),
+});
+
+export function priorityNotice(msg: Doc<"messages">, surface: string): Notice {
+  const who = msg.meta.name ? `${msg.meta.name} <${msg.fromAddress}>` : msg.fromAddress;
+  const why = msg.meta.priority?.reasons.length ? `\n\nWhy now: ${msg.meta.priority.reasons.join(", ")}` : "";
+  return {
+    title: `Priority: ${msg.meta.subject || "(no subject)"}`.slice(0, 200),
+    message: `From ${who}\n\n${msg.body.replace(/\s+/g, " ").trim().slice(0, 600)}${why}\n\nA draft follows.`,
+    tags: ["rotating_light"],
+    priority: 4,
+    click: surface,
+  };
 }
 
 export const receive = internalMutation({

@@ -27,6 +27,7 @@ export type DigestItem = {
   sourceKind?: string | null; // call_message | email | sms | relist
   deadline?: number | null; // ms UTC
   gap?: string | null; // what they asked that the room could not answer
+  priority?: "high" | "normal" | "low" | null; // lib/reader/priority.ts; high is marked and leads
 };
 
 export const GAP_LINE = "Where it says \"you haven't told me\", reply with the number and the answer; it goes out as your words and I remember it.";
@@ -59,7 +60,7 @@ export function renderLine(n: number, p: DigestItem, timeZone: string, nowMs: nu
   const ask = p.basis.length ? oneLine(p.basis[0], 80) : "";
   const askPart = ask ? ` "${ask}"` : "";
   const gap = p.gap ? ` · you haven't told me: ${oneLine(p.gap, 60)}` : "";
-  return `${n} ${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${oneLine(p.body, 160)}${gap}`;
+  return `${n} ${p.priority === "high" ? "‼ " : ""}${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${oneLine(p.body, 160)}${gap}`;
 }
 
 /** items: (digest number, proposal), already numbered by the caller. */
