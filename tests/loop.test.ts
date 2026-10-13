@@ -62,6 +62,24 @@ describe("intake", () => {
     const msgs = await t.run((ctx) => ctx.db.query("messages").collect());
     expect(msgs[0].meta.automated).toBe(true);
   });
+
+  test("reclassify withdraws pending drafts the rule now calls automated, and keeps a person's", async () => {
+    const { t, tenant } = await setup();
+    // drafted under the old rule: a meeting-notes bot, and a person
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ fromAddress: "x@ok.com", threadId: "thr_bot" }) });
+    await t.mutation(internal.mail.receive, { tenantId: tenant._id, mail: mail({ threadId: "thr_person" }) });
+    const [botMsg, personMsg] = await t.run((ctx) => ctx.db.query("messages").collect());
+    await t.run((ctx) => ctx.db.patch(botMsg._id, { fromAddress: "fred@fireflies.ai" }));
+    const bot = await t.mutation(internal.drafter.record, { messageId: botMsg._id, body: "Thanks!", basis: [], toName: "Fred" });
+    const person = await t.mutation(internal.drafter.record, { messageId: personMsg._id, body: "Yes, $185.", basis: [], toName: "Marco" });
+
+    expect(await t.mutation(internal.mail.reclassify, { tenantId: tenant._id })).toEqual({ checked: 2, withdrawn: 1 });
+    expect((await t.run((ctx) => ctx.db.get(bot)))!.status).toBe("superseded");
+    expect((await t.run((ctx) => ctx.db.get(person)))!.status).toBe("pending");
+    expect((await t.run((ctx) => ctx.db.get(botMsg._id)))!.meta.automated).toBe(true);
+    // a second pass finds nothing new
+    expect(await t.mutation(internal.mail.reclassify, { tenantId: tenant._id })).toEqual({ checked: 1, withdrawn: 0 });
+  });
 });
 
 describe("the loop", () => {
@@ -196,6 +214,19 @@ describe("the loop", () => {
     expect(await t.run((ctx) => ctx.db.query("facts").collect())).toHaveLength(2);
     const events = await t.run((ctx) => ctx.db.query("events").collect());
     expect(events.filter((e) => e.kind === "fact.learned")).toHaveLength(2);
+  });
+
+  test("an edit in the draft's own words is a plain send and teaches nothing", async () => {
+    const pid = await t.mutation(internal.drafter.record, {
+      messageId: msgId, body: "Tony will confirm Saturday's hours.", basis: ["Do you have a leather bag under $200?"], toName: "Marco", gap: "Saturday opening hours",
+    });
+    await t.mutation(internal.digest.build, { tenantId });
+    const out = await t.mutation(internal.rulings.fromEmail, { tenantId, from: OWNER, text: "1   Tony will confirm  Saturday's hours." });
+    expect(out.confirmation).toBe("Sending 1 to Marco.");
+    expect((await t.run((ctx) => ctx.db.get(pid)))!).toMatchObject({ status: "signed", body: "Tony will confirm Saturday's hours." });
+    expect(await t.run((ctx) => ctx.db.query("facts").collect())).toHaveLength(0);
+    const rulings = await t.run((ctx) => ctx.db.query("rulings").collect());
+    expect(rulings.at(-1)).toMatchObject({ verdict: "sign" });
   });
 
   test("skip, help, later, hold, and the digest command", async () => {

@@ -7,7 +7,7 @@
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { action, internalAction, internalMutation, type MutationCtx } from "./_generated/server";
 import { appendEvent, recordAction } from "./events";
 import { AgentMail } from "./lib/mail/agentmail";
@@ -16,6 +16,7 @@ import { looksAutomated } from "./lib/reader/automated";
 import { acknowledgeSite } from "./facts";
 import { siteToken } from "./lib/rulings/token";
 import { SITE_HEADER } from "./lib/site/publish";
+import { supersede } from "./proposals";
 import { handleOwnerReply } from "./rulings";
 import { dispatchTask } from "./tasks";
 import { siteSecret, siteUrl } from "./surface";
@@ -108,6 +109,35 @@ export const receive = internalMutation({
     const tenant = await ctx.db.get(tenantId);
     if (!tenant) throw new Error("unknown tenant");
     return await receiveMail(ctx, tenant, mail);
+  },
+});
+
+/**
+ * Re-run the automated rule over what is still waiting (Python HTR's mail_reclassify). Run it
+ * whenever the rule changes: a pending email draft whose message, or whose recipient, now reads
+ * as automated is superseded, and its message is marked. Headers aren't stored, so this sees
+ * sender, subject and body only. Pending drafts are few; one bounded pass is enough.
+ */
+export const reclassify = internalMutation({
+  args: { tenantId: v.id("tenants") },
+  returns: v.object({ checked: v.number(), withdrawn: v.number() }),
+  handler: async (ctx, { tenantId }) => {
+    const pending = await ctx.db
+      .query("proposals")
+      .withIndex("by_tenant_status", (q) => q.eq("tenantId", tenantId).eq("status", "pending"))
+      .take(500);
+    let withdrawn = 0;
+    for (const p of pending) {
+      if (p.kind !== "email") continue;
+      const msg = p.sourceKind === "email" && p.sourceId ? await ctx.db.get(p.sourceId as Id<"messages">) : null;
+      const fromMessage = msg ? looksAutomated({ fromAddress: msg.fromAddress, subject: msg.meta.subject, text: msg.body }) : false;
+      if (!fromMessage && !looksAutomated({ fromAddress: p.toAddress })) continue;
+      if ((await supersede(ctx, p._id)) === null) continue;
+      if (msg) await ctx.db.patch(msg._id, { meta: { ...msg.meta, automated: true } });
+      await appendEvent(ctx, tenantId, "mail.reclassified", { proposalId: p._id, to: p.toAddress });
+      withdrawn++;
+    }
+    return { checked: pending.length, withdrawn };
   },
 });
 

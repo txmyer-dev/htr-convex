@@ -77,6 +77,9 @@ describe("toDraft", () => {
   test("an empty draft is an error", () => {
     expect(() => toDraft('{"body":""}', req)).toThrow(/empty draft/);
     expect(extractJson("nope")).toBeNull();
+    // raw newlines inside a string (Python HTR's strict=False)
+    expect(extractJson('{"body": "Hi Marco,\nSaturday works.\n\tTony", "basis": []}')).toEqual({ body: "Hi Marco,\nSaturday works.\n\tTony", basis: [] });
+    expect(extractJson('Here you go:\n{"body": "line one\nline two"}')).toEqual({ body: "line one\nline two" });
   });
 });
 

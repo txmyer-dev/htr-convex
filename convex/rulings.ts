@@ -68,7 +68,10 @@ export async function applyVerdict(
     await record(ctx, tenant._id, p._id, digestId, from, raw, "reject");
     return `Skipped ${n} (${who(p)}).`;
   }
-  const words = verdict.kind === "edit" ? verdict.body : "";
+  // Unchanged words are a plain Send: recording them as an edit would teach the draft's own text
+  // back as the owner's fact.
+  const same = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+  const words = verdict.kind === "edit" && !same(verdict.body, p.body) ? verdict.body : "";
   const edited = words ? (await edit(ctx, p._id, words)) !== null : false;
   const signed = await approve(ctx, p._id);
   if (signed === null) return `${n}: already ruled.`; // raced: someone else got there first

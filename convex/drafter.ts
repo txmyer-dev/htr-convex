@@ -74,7 +74,9 @@ export function extractJson(content: string): Record<string, unknown> | null {
   let text = content.trim();
   if (text.startsWith("```")) text = text.replace(/^```[a-zA-Z]*\s*|\s*```$/g, "");
   const candidates = [text, ...(text.match(/\{[\s\S]*\}/g) ?? [])];
-  for (const c of candidates) {
+  // Models often put raw newlines inside strings; retry each candidate with them escaped
+  // (Python HTR's json.loads(strict=False)).
+  for (const c of candidates.flatMap((c) => [c, escapeControlsInStrings(c)])) {
     try {
       const obj = JSON.parse(c);
       if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj as Record<string, unknown>;
@@ -83,6 +85,26 @@ export function extractJson(content: string): Record<string, unknown> | null {
     }
   }
   return null;
+}
+
+/** Escape control characters that sit inside JSON string literals; leaves the rest untouched. */
+export function escapeControlsInStrings(s: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of s) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      else if (ch < " ") {
+        out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`;
+        continue;
+      }
+    } else if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
 }
 
 /** Turn model output into a Draft; basis quotes that are not in the source are dropped. */
