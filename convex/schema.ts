@@ -49,6 +49,19 @@ export const tenantFields = {
     teamId: v.optional(v.string()), // the ClickUp workspace: agenda reads search it by tag
     byLane: v.optional(v.array(v.object({ lane: v.string(), clickupListId: v.string(), listName: v.string() }))),
   })),
+  // Which adapter each claw uses, and where its credentials live (adapters/resolve.ts). Secrets
+  // never sit here: a field ending in Env names the deployment env var that holds one. Absent,
+  // a claw falls back to the deployment-wide env vars (one install, one tenant).
+  adapters: v.optional(v.object({
+    mail: v.optional(v.object({ kind: v.literal("agentmail"), keyEnv: v.optional(v.string()) })),
+    notify: v.optional(v.object({ kind: v.literal("ntfy"), topic: v.string(), url: v.optional(v.string()), tokenEnv: v.optional(v.string()) })),
+    tasks: v.optional(v.object({ kind: v.literal("clickup"), tokenEnv: v.optional(v.string()) })),
+    reader: v.optional(v.object({ kind: v.literal("firecrawl"), keyEnv: v.optional(v.string()) })),
+    llm: v.optional(v.object({
+      kind: v.literal("openai-compat"), baseUrl: v.optional(v.string()), model: v.optional(v.string()),
+      embedModel: v.optional(v.string()), keyEnv: v.optional(v.string()),
+    })),
+  })),
   hold: v.optional(v.union(v.null(), v.object({ since: v.number(), until: v.optional(v.string()) }))),
   digestScheduled: v.optional(v.id("_scheduled_functions")), // immediate mode: the debounced digest
   // A try-it tenant: made from the front door, on a leased inbox, gone after the lease.
@@ -67,6 +80,16 @@ export const grounding = v.object({
 
 export default defineSchema({
   tenants: defineTable(tenantFields).index("by_slug", ["slug"]),
+
+  // The heartbeat's last word on each claw (health.ts). High churn, so its own table, one row per tenant and port.
+  clawHealth: defineTable({
+    tenantId: v.id("tenants"),
+    port: v.string(),
+    adapter: v.optional(v.string()),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_tenant_port", ["tenantId", "port"]),
 
   messages: defineTable({
     tenantId: v.id("tenants"),

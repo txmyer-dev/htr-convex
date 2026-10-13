@@ -7,7 +7,9 @@
 // HTR_NTFY_TOKEN for a protected server). Use its own topic, not the call listener's: the
 // listener reads its topic for phone questions.
 
-export type NtfyConfig = { url: string; topic: string; token?: string };
+import type { Notice } from "../../adapters/ports";
+
+export type NtfyConfig ={ url: string; topic: string; token?: string };
 
 export function ntfyConfig(): NtfyConfig | null {
   const topic = process.env.HTR_NTFY_TOPIC;
@@ -18,11 +20,11 @@ export function ntfyConfig(): NtfyConfig | null {
 export type PushItem = { kind?: string; toName?: string | null; toAddress: string; body: string; basis: string[] };
 export type PushLinks = { sign: string; reject: string; edit: string };
 
-export function notification(cfg: NtfyConfig, item: PushItem, links: PushLinks, surface: string) {
+/** The notice for one waiting item, in any notify claw's shape (adapters/ports.ts Notice). */
+export function noticeFor(item: PushItem, links: PushLinks, surface: string): Notice {
   const task = item.kind === "task";
   const quote = item.basis[0] ? `\n\n“${item.basis[0]}”` : "";
   return {
-    topic: cfg.topic,
     title: task ? `Task → ${item.toName}` : `Draft to ${item.toName || item.toAddress}`,
     message: (item.body + quote).slice(0, 1500),
     tags: [task ? "pushpin" : "envelope"],
@@ -35,7 +37,11 @@ export function notification(cfg: NtfyConfig, item: PushItem, links: PushLinks, 
   };
 }
 
-export async function push(cfg: NtfyConfig, message: ReturnType<typeof notification>, f: typeof fetch = fetch): Promise<void> {
+export function notification(cfg: NtfyConfig, item: PushItem, links: PushLinks, surface: string) {
+  return { topic: cfg.topic, ...noticeFor(item, links, surface) };
+}
+
+export async function push(cfg: NtfyConfig, message: { topic: string } & object, f: typeof fetch = fetch): Promise<void> {
   const res = await f(cfg.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}) },

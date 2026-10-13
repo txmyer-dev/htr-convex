@@ -9,93 +9,15 @@
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
-import { normalizeBaseUrl } from "./drafter";
+import { llmClaw, readerClaw } from "./adapters/resolve";
+import type { ReaderClaw } from "./adapters/ports";
 import { chunkMarkdown } from "./lib/knowledge/chunk";
 import { senderSite } from "./lib/knowledge/domain";
-import { embed, EMBED_DEFAULT_MODEL, type EmbedOptions } from "./lib/llm/embed";
 
-export type Page = { url: string; title?: string; markdown: string };
-
-export async function scrape(url: string, apiKey: string, fetchImpl: typeof fetch = fetch, cap = 20_000): Promise<Page> {
-  const res = await fetchImpl("https://api.firecrawl.dev/v2/scrape", {
-    method: "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-    // maxAge 0: Firecrawl serves a two-day cache by default, and a refresh is asked for because the site changed.
-    body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true, maxAge: 0 }),
-  });
-  const json = await res.json();
-  if (!res.ok || !json?.success) throw new Error(`Firecrawl ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-  const d = json.data ?? {};
-  // A dead site is not knowledge: Firecrawl returns the 404 page as markdown with success=true,
-  // and the drafter would put "page not found" in front of the model as what the business says.
-  const status = Number(d.metadata?.statusCode ?? 200);
-  if (status >= 400) throw new Error(`Firecrawl: ${url} answered ${status}${d.metadata?.error ? ` (${d.metadata.error})` : ""}; nothing stored`);
-  const markdown = String(d.markdown ?? "").trim();
-  if (!markdown) throw new Error(`Firecrawl: ${url} had no readable content; nothing stored`);
-  return { url: d.metadata?.sourceURL ?? url, title: d.metadata?.title, markdown: markdown.slice(0, cap) };
-}
-
-export type CrawlOptions = { limit?: number; cap?: number; pollMs?: number; maxWaitMs?: number; depth?: number };
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Pages that are never what a business says: sign-in, carts, accounts, search results, tag and category listings. */
-export const EXCLUDE_PATHS = ["^/(signin|sign-in|login|logout|signup|sign-up|register|cart|checkout|account|my-account|search|tag|tags|category|categories|wp-admin|wp-login\\.php)(/.*)?$"];
-
-/**
- * The whole site, not the homepage: Firecrawl's crawl walks the site (sitemap and links, two
- * hops deep) and returns each page as markdown. The job is asynchronous, so this starts it and
- * polls until it completes. Dead pages and empty pages are dropped; the homepage comes first,
- * then the rest by URL, so the drafter's budget is spent on the front of the site.
- */
-export async function crawl(url: string, apiKey: string, fetchImpl: typeof fetch = fetch, opts: CrawlOptions = {}): Promise<Page[]> {
-  const { limit = 20, cap = 6_000, pollMs = 3_000, maxWaitMs = 180_000, depth = 2 } = opts;
-  const headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
-  const started = await fetchImpl("https://api.firecrawl.dev/v2/crawl", {
-    method: "POST",
-    headers,
-    // sitemap: skip. With a page budget, the pages linked from the homepage (the nav: hours,
-    // prices, services, contact) matter more than whatever a sitemap lists first (the blog).
-    body: JSON.stringify({
-      url, limit, maxDiscoveryDepth: depth, sitemap: "skip", excludePaths: EXCLUDE_PATHS,
-      scrapeOptions: { formats: ["markdown"], onlyMainContent: true, maxAge: 0 },
-    }),
-  });
-  const job = await started.json();
-  if (!started.ok || !job?.success || !job.id) throw new Error(`Firecrawl crawl ${started.status}: ${JSON.stringify(job).slice(0, 300)}`);
-  const deadline = Date.now() + maxWaitMs;
-  const raw: Array<{ markdown?: string; metadata?: Record<string, unknown> }> = [];
-  let next: string | null = `https://api.firecrawl.dev/v2/crawl/${job.id}`;
-  while (next) {
-    const res: Response = await fetchImpl(next, { headers });
-    const j: any = await res.json();
-    if (!res.ok || j?.success === false || j?.status === "failed") throw new Error(`Firecrawl crawl ${res.status}: ${JSON.stringify(j).slice(0, 300)}`);
-    if (j.status !== "completed") {
-      if (Date.now() > deadline) throw new Error(`Firecrawl crawl of ${url} did not finish in ${Math.round(maxWaitMs / 1000)} s`);
-      await sleep(pollMs);
-      continue;
-    }
-    raw.push(...(Array.isArray(j.data) ? j.data : []));
-    next = typeof j.next === "string" && j.next ? j.next : null;
-  }
-  const seen = new Set<string>();
-  const pages: Page[] = [];
-  for (const d of raw) {
-    const m = d.metadata ?? {};
-    const status = Number(m.statusCode ?? 200);
-    const markdown = String(d.markdown ?? "").trim();
-    const pageUrl = String(m.sourceURL ?? m.url ?? "");
-    // A URL with a query string is a search, a redirect, or a tracked link, not a page of the site.
-    if (status >= 400 || !markdown || !pageUrl || pageUrl.includes("?") || seen.has(pageUrl)) continue;
-    seen.add(pageUrl);
-    const title = Array.isArray(m.title) ? String(m.title[0] ?? "") : m.title ? String(m.title) : undefined;
-    pages.push({ url: pageUrl, title: title || undefined, markdown: markdown.slice(0, cap) });
-  }
-  if (pages.length === 0) throw new Error(`Firecrawl: ${url} had no readable pages; nothing stored`);
-  return pages.sort((a, b) => a.url.length - b.url.length || (a.url < b.url ? -1 : 1));
-}
+export { crawl, EXCLUDE_PATHS, scrape, type CrawlOptions, type Page } from "./lib/reader/firecrawl";
+import type { Page } from "./lib/reader/firecrawl";
 
 /** HTR_CRAWL_PAGES: how many pages of a business site to read (default 20). Firecrawl charges one credit per page. */
 export function crawlLimit(): number {
@@ -103,10 +25,10 @@ export function crawlLimit(): number {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 100) : 20;
 }
 
-function apiKey(): string {
-  const k = process.env.FIRECRAWL_API_KEY;
-  if (!k) throw new Error("FIRECRAWL_API_KEY is not set on the deployment");
-  return k;
+function readerOf(tenant: Doc<"tenants">): ReaderClaw {
+  const reader = readerClaw(tenant);
+  if (!reader) throw new Error("no reader claw: set FIRECRAWL_API_KEY (or the tenant's adapters.reader)");
+  return reader;
 }
 
 // ---- the business site -----------------------------------------------------------------------
@@ -139,19 +61,20 @@ export const store = internalMutation({
 type Read = Array<{ url: string; title?: string; chars: number }>;
 
 /** The business site: crawled, and if the crawl fails, at least the one page scraped. */
-async function readBusinessSite(site: string): Promise<Page[]> {
+async function readBusinessSite(reader: ReaderClaw, site: string): Promise<Page[]> {
   try {
-    return await crawl(site, apiKey(), fetch, { limit: crawlLimit() });
+    return await reader.crawl(site, { limit: crawlLimit() });
   } catch (e) {
-    const one = await scrape(site, apiKey());
+    const one = await reader.scrape(site);
     console.warn(`crawl of ${site} failed (${String(e).slice(0, 120)}); stored the one page`);
     return [one];
   }
 }
 
 async function readSite(ctx: ActionCtx, tenant: Doc<"tenants">, urls?: string[]): Promise<Read> {
-  const pages: Page[] = tenant.business.site ? await readBusinessSite(tenant.business.site) : [];
-  for (const u of urls ?? []) pages.push(await scrape(u, apiKey()));
+  const reader = readerOf(tenant);
+  const pages: Page[] = tenant.business.site ? await readBusinessSite(reader, tenant.business.site) : [];
+  for (const u of urls ?? []) pages.push(await reader.scrape(u));
   // A full read replaces what the site used to say; extra URLs are additions.
   await ctx.runMutation(internal.knowledge.store, { tenantId: tenant._id, pages, replace: !urls?.length });
   return pages.map((p) => ({ url: p.url, title: p.title, chars: p.markdown.length }));
@@ -226,15 +149,15 @@ export const setProfile = internalMutation({
  * the one already read, or a fresh one. A webmail address, a missing key, or a dead site all
  * mean "nothing", and the attempt is remembered so the next message does not read it again.
  */
-export async function profileSender(ctx: ActionCtx, contact: Doc<"contacts"> | null): Promise<NonNullable<Profile> | null> {
+export async function profileSender(ctx: ActionCtx, contact: Doc<"contacts"> | null, tenant: Doc<"tenants"> | null): Promise<NonNullable<Profile> | null> {
   if (!contact) return null;
   if (contact.profiledAt) return contact.profile ?? null;
   const site = senderSite(contact.address);
-  const key = process.env.FIRECRAWL_API_KEY;
-  if (!site || !key) return null;
+  const reader = readerClaw(tenant);
+  if (!site || !reader) return null;
   let profile: NonNullable<Profile> | undefined;
   try {
-    const page = await scrape(site, key, fetch, 8_000);
+    const page = await reader.scrape(site, 8_000);
     profile = { url: page.url, title: page.title, markdown: page.markdown, fetchedAt: Date.now() };
   } catch (e) {
     await ctx.runMutation(internal.drafter.noteEvent, { tenantId: contact.tenantId, kind: "profile.failed", payload: { site, error: String(e).slice(0, 200) } });
@@ -249,12 +172,6 @@ export async function profileSender(ctx: ActionCtx, contact: Doc<"contacts"> | n
 // chunk.ts), each chunk embedded, and the drafter asks the vector index for the few that speak to
 // the message. Rebuilt whenever the site is re-read; absent (no key, a failed call), the drafter
 // falls back to ranking whole pages by the words they share with the message.
-
-export function embedOptions(): EmbedOptions | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  return { baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL), apiKey, model: process.env.OPENAI_EMBED_MODEL || EMBED_DEFAULT_MODEL };
-}
 
 export const MAX_CHUNKS = 400; // twenty pages, twenty pieces each, at most
 
@@ -297,15 +214,16 @@ export const pagesOf = internalQuery({
 export const embedTenant = internalAction({
   args: { tenantId: v.id("tenants") },
   handler: async (ctx, { tenantId }): Promise<number> => {
-    const o = embedOptions();
-    if (!o) return 0;
+    const tenant = await ctx.runQuery(internal.tenants.get, { tenantId });
+    const llm = llmClaw(tenant);
+    if (!llm) return 0;
     const pages: Doc<"knowledge">[] = await ctx.runQuery(internal.knowledge.pagesOf, { tenantId });
     const rows: Array<{ url: string; title?: string; text: string; fetchedAt: number }> = [];
     for (const p of pages) for (const c of chunkMarkdown(p.markdown)) rows.push({ url: p.url, title: p.title, text: c.text, fetchedAt: p.fetchedAt });
     const batch = rows.slice(0, MAX_CHUNKS);
     try {
       const vectors: number[][] = [];
-      for (let i = 0; i < batch.length; i += 100) vectors.push(...(await embed(batch.slice(i, i + 100).map((r) => r.text), o)));
+      for (let i = 0; i < batch.length; i += 100) vectors.push(...(await llm.embed(batch.slice(i, i + 100).map((r) => r.text))));
       return await ctx.runMutation(internal.knowledge.replaceChunks, { tenantId, chunks: batch.map((r, i) => ({ ...r, embedding: vectors[i] })) });
     } catch (e) {
       await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "embed.failed", payload: { chunks: batch.length, error: String(e).slice(0, 200) } });
@@ -315,11 +233,12 @@ export const embedTenant = internalAction({
 });
 
 /** The drafter's question to the index: the chunks that speak to the message, most similar first. */
-export async function retrieve(ctx: ActionCtx, tenantId: Id<"tenants">, query: string, limit = 8): Promise<Array<{ url: string; title?: string; text: string }> | null> {
-  const o = embedOptions();
-  if (!o || !(await ctx.runQuery(internal.knowledge.hasChunks, { tenantId }))) return null;
+export async function retrieve(ctx: ActionCtx, tenant: Doc<"tenants">, query: string, limit = 8): Promise<Array<{ url: string; title?: string; text: string }> | null> {
+  const tenantId = tenant._id;
+  const llm = llmClaw(tenant);
+  if (!llm || !(await ctx.runQuery(internal.knowledge.hasChunks, { tenantId }))) return null;
   try {
-    const [vector] = await embed([query.slice(0, 4_000)], o);
+    const [vector] = await llm.embed([query.slice(0, 4_000)]);
     const hits = await ctx.vectorSearch("chunks", "by_embedding", { vector, limit, filter: (q) => q.eq("tenantId", tenantId) });
     if (hits.length === 0) return [];
     await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "retrieve.hit", payload: { chunks: hits.length, top: Number(hits[0]._score.toFixed(3)) } });

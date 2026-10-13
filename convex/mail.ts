@@ -10,6 +10,8 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { action, internalAction, internalMutation, type MutationCtx } from "./_generated/server";
 import { appendEvent, recordAction } from "./events";
+import { mailClaw } from "./adapters/resolve";
+import type { MailClaw, Sent } from "./adapters/ports";
 import { AgentMail } from "./lib/mail/agentmail";
 import { stripFooter, type InboundMail } from "./lib/mail/inbound";
 import { looksAutomated } from "./lib/reader/automated";
@@ -25,11 +27,6 @@ export function client(): AgentMail {
   const apiKey = process.env.AGENTMAIL_API_KEY;
   if (!apiKey) throw new Error("AGENTMAIL_API_KEY is not set on the deployment");
   return new AgentMail(apiKey);
-}
-
-function inboxOf(tenant: Doc<"tenants">): string {
-  if (!tenant.channels.inboxId) throw new Error(`tenant ${tenant.slug} has no AgentMail inbox; run mail:provision`);
-  return tenant.channels.inboxId;
 }
 
 const reSubject = (s: string | undefined) => (s ? (/^re:/i.test(s) ? s : `Re: ${s}`) : "Re: your message");
@@ -149,11 +146,10 @@ export const sendToOwner = internalAction({
   handler: async (ctx, { tenantId, subject, text, html, inReplyTo }): Promise<string | null> => {
     const tenant = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
-    const inbox = inboxOf(tenant);
-    const c = client();
-    const res = inReplyTo ? await c.reply(inbox, inReplyTo, { text, html }) : await c.send(inbox, { to: [tenant.owner.email], subject, text, html });
-    await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "mail.sent_owner", payload: { subject, ref: res.messageId } });
-    return res.messageId ?? null;
+    const mail = mailClaw(tenant);
+    const res = inReplyTo ? await mail.reply(inReplyTo, { text, html }) : await mail.send({ to: [tenant.owner.email], subject, text, html });
+    await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "mail.sent_owner", payload: { subject, ref: res.ref } });
+    return res.ref ?? null;
   },
 });
 
@@ -163,16 +159,16 @@ export const sendNotice = internalAction({
   handler: async (ctx, { tenantId, toAddress, subject, text, inReplyTo }) => {
     const tenant = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
-    const inbox = inboxOf(tenant);
-    const c = client();
-    const res = inReplyTo ? await c.reply(inbox, inReplyTo, { text }) : await c.send(inbox, { to: [toAddress], subject, text });
-    await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "notice.sent", payload: { to: toAddress, ref: res.messageId } });
+    const mail = mailClaw(tenant);
+    const res = inReplyTo ? await mail.reply(inReplyTo, { text }) : await mail.send({ to: [toAddress], subject, text });
+    await ctx.runMutation(internal.drafter.noteEvent, { tenantId, kind: "notice.sent", payload: { to: toAddress, ref: res.ref } });
   },
 });
 
 /**
  * A signed proposal goes out as the owner, once. The status transitions are the idempotency:
  * only SIGNED becomes SENDING; a failure leaves FAILED, which a retry puts back to SIGNED first.
+ * Each kind goes out through its claw (DISPATCH below); the core never names a vendor.
  */
 export const dispatch = internalAction({
   args: { proposalId: v.id("proposals") },
@@ -181,27 +177,10 @@ export const dispatch = internalAction({
     if (!p) return "nothing to do"; // already sent, or never signed
     const tenant = await ctx.runQuery(internal.tenants.get, { tenantId: p.tenantId });
     if (!tenant) throw new Error("unknown tenant");
-    if (p.kind === "task") {
-      // Not mail: the ClickUp executor. sentRef = the task id the sync reads back.
-      try {
-        const made = await dispatchTask(tenant, p);
-        await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: made.id });
-        await ctx.runMutation(internal.tasks.noteTask, { proposalId, url: made.url, status: made.status, done: false });
-        return "sent";
-      } catch (e) {
-        await ctx.runMutation(internal.proposals.finishSend, { proposalId, error: String(e) });
-        throw e;
-      }
-    }
     try {
-      const inbox = inboxOf(tenant);
-      const c = client();
-      const res = p.kind === "site"
-        ? await sendSiteRequest(c, inbox, tenant, p)
-        : p.meta.messageId
-          ? await c.reply(inbox, p.meta.messageId, { text: p.body })
-          : await c.send(inbox, { to: [p.toAddress], subject: reSubject(p.meta.subject), text: p.body });
-      await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: res.messageId, threadId: res.threadId });
+      const out = await DISPATCH[p.kind](tenant, p);
+      await ctx.runMutation(internal.proposals.finishSend, { proposalId, ref: out.ref, threadId: out.threadId });
+      if (out.task) await ctx.runMutation(internal.tasks.noteTask, { proposalId, url: out.task.url, status: out.task.status, done: false });
       return "sent";
     } catch (e) {
       await ctx.runMutation(internal.proposals.finishSend, { proposalId, error: String(e) });
@@ -210,13 +189,32 @@ export const dispatch = internalAction({
   },
 });
 
+type Dispatched = Sent & { task?: { url: string; status: string } };
+
+/** Kind -> the claw that carries it. sms has no messaging claw yet (merge plan, phase 5): it fails loudly. */
+const DISPATCH: Record<Doc<"proposals">["kind"], (tenant: Doc<"tenants">, p: Doc<"proposals">) => Promise<Dispatched>> = {
+  email: (tenant, p) => {
+    const mail = mailClaw(tenant);
+    return p.meta.messageId ? mail.reply(p.meta.messageId, { text: p.body }) : mail.send({ to: [p.toAddress], subject: reSubject(p.meta.subject), text: p.body });
+  },
+  site: (tenant, p) => sendSiteRequest(mailClaw(tenant), tenant, p),
+  // Not mail: the tasks claw. ref = the task id the sync reads back.
+  task: async (tenant, p) => {
+    const made = await dispatchTask(tenant, p);
+    return { ref: made.id, task: { url: made.url, status: made.status } };
+  },
+  sms: async () => {
+    throw new Error("no messaging claw can text yet; sms proposals cannot be sent");
+  },
+};
+
 /**
  * A site request: a new thread to the web agent, the owner copied, signed in a header so the
  * agent acts only on what HTR sent. The thread id comes back so the agent's reply finds the proposal.
  */
-async function sendSiteRequest(c: AgentMail, inbox: string, tenant: Doc<"tenants">, p: Doc<"proposals">) {
+async function sendSiteRequest(mail: MailClaw, tenant: Doc<"tenants">, p: Doc<"proposals">): Promise<Sent> {
   const token = await siteToken(siteSecret(), tenant.slug, p._id);
-  return await c.send(inbox, {
+  return await mail.send({
     to: [p.toAddress], cc: [tenant.owner.email], subject: p.meta.subject ?? `Update ${tenant.business.site ?? "the site"}`, text: p.body,
     headers: { [SITE_HEADER]: `${tenant.slug}:${p._id}:${token}` },
   });

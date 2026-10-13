@@ -1,4 +1,4 @@
-// The clock. Hourly: overdue drafts stop waiting. Every quarter hour: demo leases that ran out are released.
+// The clock. Hourly: overdue drafts stop waiting, and the heartbeat probes every claw. Every quarter hour: demo leases that ran out are released.
 // Every minute: any tenant whose digest hour (or weekly last call) is now gets one (immediate-mode tenants are served
 // by the debounced scheduler instead). Monday mornings: every business site is read again.
 
@@ -30,5 +30,6 @@ crons.interval("expire overdue drafts", { hours: 1 }, internal.rulings.expireAll
 crons.interval("digest clock", { minutes: 1 }, internal.crons.digestClock, {});
 crons.interval("release demo leases", { minutes: 15 }, internal.demo.sweep, {});
 crons.interval("read open tasks back from ClickUp", { minutes: 15 }, internal.tasks.sync, {});
+crons.interval("probe every claw", { hours: 1 }, internal.health.beat, {});
 crons.cron("read the business sites again", "0 9 * * 1", internal.knowledge.refreshAll, {});
 export default crons;

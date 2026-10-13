@@ -14,7 +14,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
-import { createTask, getTask, openTasksTagged, type AgendaTask } from "./lib/tasks/clickup";
+import { taskClaw } from "./adapters/resolve";
+import type { TaskClaw } from "./adapters/ports";
+import type { AgendaTask } from "./lib/tasks/clickup";
 import { accept, agendaTag, description, dueMs, listFor, sameness, type CallItem } from "./lib/tasks/intake";
 import { rulingToken } from "./lib/rulings/token";
 import { markLive, propose, withStatus } from "./proposals";
@@ -24,10 +26,10 @@ export async function intakeKey(slug: string): Promise<string> {
   return await rulingToken(rulingSecret(), slug, "intake", "sign");
 }
 
-function token(): string {
-  const t = process.env.CLICKUP_API_TOKEN;
-  if (!t) throw new Error("CLICKUP_API_TOKEN is not set on the deployment");
-  return t;
+function tasksOf(tenant: Doc<"tenants">) {
+  const claw = taskClaw(tenant);
+  if (!claw) throw new Error(`tenant ${tenant.slug} has no tasks claw (CLICKUP_API_TOKEN or adapters.tasks)`);
+  return claw;
 }
 
 const callItem = v.object({
@@ -112,7 +114,7 @@ export const callItemStates = internalQuery({
 export async function dispatchTask(tenant: Doc<"tenants">, p: Doc<"proposals">): Promise<{ id: string; url: string; status: string }> {
   if (!tenant.tasks) throw new Error(`tenant ${tenant.slug} has no task list configured`);
   const t = p.meta.task;
-  const made = await createTask(token(), t?.listId ?? listFor(tenant.tasks, t?.lane).listId, {
+  const made = await tasksOf(tenant).create(t?.listId ?? listFor(tenant.tasks, t?.lane).listId, {
     name: p.body,
     description: t ? description({ id: t.itemId, type: t.type, what: p.body, quote: p.basis[0] ?? "", who: t.who, lane: t.lane, destination: "clickup.task" }, t.session) : p.body,
     dueMs: dueMs(t?.due),
@@ -135,26 +137,32 @@ export const noteTask = internalMutation({
 
 export const openTasks = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Array<{ proposalId: Id<"proposals">; ref: string }>> => {
-    const out: Array<{ proposalId: Id<"proposals">; ref: string }> = [];
+  handler: async (ctx): Promise<Array<{ tenantId: Id<"tenants">; proposalId: Id<"proposals">; ref: string }>> => {
+    const out: Array<{ tenantId: Id<"tenants">; proposalId: Id<"proposals">; ref: string }> = [];
     for (const tenant of await ctx.db.query("tenants").take(500)) {
       for (const p of await withStatus(ctx, tenant._id, "sent")) {
-        if (p.kind === "task" && p.sentRef) out.push({ proposalId: p._id, ref: p.sentRef });
+        if (p.kind === "task" && p.sentRef) out.push({ tenantId: tenant._id, proposalId: p._id, ref: p.sentRef });
       }
     }
     return out.slice(0, 100);
   },
 });
 
-/** Every 15 minutes: read each open task back from ClickUp. A failed read is skipped, not fatal. */
+/** Every 15 minutes: read each open task back through its tenant's tasks claw. A failed read is skipped, not fatal. */
 export const sync = internalAction({
   args: {},
   handler: async (ctx): Promise<number> => {
-    if (!process.env.CLICKUP_API_TOKEN) return 0;
     let n = 0;
-    for (const { proposalId, ref } of await ctx.runQuery(internal.tasks.openTasks, {})) {
+    const claws = new Map<Id<"tenants">, TaskClaw | null>();
+    for (const { tenantId, proposalId, ref } of await ctx.runQuery(internal.tasks.openTasks, {})) {
+      if (!claws.has(tenantId)) {
+        const tenant = await ctx.runQuery(internal.tenants.get, { tenantId });
+        claws.set(tenantId, tenant ? taskClaw(tenant) : null);
+      }
+      const claw = claws.get(tenantId);
+      if (!claw) continue;
       try {
-        const s = await getTask(token(), ref);
+        const s = await claw.get(ref);
         await ctx.runMutation(internal.tasks.noteTask, { proposalId, url: s.url, status: s.status, done: s.done });
         n++;
       } catch (e) {
@@ -176,5 +184,5 @@ export const intakeKeyFor = internalQuery({
 /** What waits to be raised at a series' next meeting: open ClickUp tasks tagged raise-<series>. */
 export async function agendaFor(tenant: Doc<"tenants">, tag: string): Promise<AgendaTask[]> {
   if (!tenant.tasks?.teamId) return [];
-  return await openTasksTagged(token(), tenant.tasks.teamId, tag);
+  return (await taskClaw(tenant)?.listTagged(tag)) ?? [];
 }

@@ -11,9 +11,9 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, mutation, type MutationCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
-import { extractJson, normalizeBaseUrl } from "./drafter";
+import { llmClaw } from "./adapters/resolve";
+import { extractJson } from "./drafter";
 import { appendEvent } from "./events";
-import { chatCompletion } from "./lib/llm/openaiCompat";
 import type { InboundMail } from "./lib/mail/inbound";
 import { agentVerdict, saysOnSite, SITE_NAME, siteRequest, siteSubject } from "./lib/site/publish";
 import { markLive as markLiveProposal, propose, resendSite, transition, withStatus } from "./proposals";
@@ -72,19 +72,14 @@ export const distill = internalAction({
   handler: async (ctx, { factId }): Promise<string | null> => {
     const f: Doc<"facts"> | null = await ctx.runQuery(internal.facts.get, { factId });
     if (!f) return null;
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return null;
+    const tenant = await ctx.runQuery(internal.tenants.get, { tenantId: f.tenantId });
+    const llm = llmClaw(tenant);
+    if (!llm) return null;
     try {
-      const content = await chatCompletion({
-        baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
-        apiKey,
-        model: process.env.OPENAI_MODEL || "gpt-5-mini",
-        messages: [
-          { role: "system", content: DISTILL },
-          { role: "user", content: JSON.stringify({ asked: f.question ?? null, owner_replied: f.answer }) },
-        ],
-        json: true,
-      });
+      const content = await llm.chat([
+        { role: "system", content: DISTILL },
+        { role: "user", content: JSON.stringify({ asked: f.question ?? null, owner_replied: f.answer }) },
+      ], { json: true });
       const statement = toStatement(content);
       await ctx.runMutation(internal.facts.setStatement, { factId, statement: statement ?? undefined });
       // Something the site does not say, for a tenant with a web agent: ask to put it there.

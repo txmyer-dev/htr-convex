@@ -8,12 +8,16 @@
  * @module
  */
 
+import type * as adapters_ports from "../adapters/ports.js";
+import type * as adapters_resolve from "../adapters/resolve.js";
+import type * as adapters_vendors from "../adapters/vendors.js";
 import type * as crons from "../crons.js";
 import type * as demo from "../demo.js";
 import type * as digest from "../digest.js";
 import type * as drafter from "../drafter.js";
 import type * as events from "../events.js";
 import type * as facts from "../facts.js";
+import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as install from "../install.js";
 import type * as knowledge from "../knowledge.js";
@@ -24,6 +28,7 @@ import type * as lib_knowledge_chunk from "../lib/knowledge/chunk.js";
 import type * as lib_knowledge_domain from "../lib/knowledge/domain.js";
 import type * as lib_knowledge_links from "../lib/knowledge/links.js";
 import type * as lib_knowledge_rank from "../lib/knowledge/rank.js";
+import type * as lib_llm_baseUrl from "../lib/llm/baseUrl.js";
 import type * as lib_llm_embed from "../lib/llm/embed.js";
 import type * as lib_llm_openaiCompat from "../lib/llm/openaiCompat.js";
 import type * as lib_mail_agentmail from "../lib/mail/agentmail.js";
@@ -34,6 +39,7 @@ import type * as lib_proposals_lifecycle from "../lib/proposals/lifecycle.js";
 import type * as lib_proposals_timeline from "../lib/proposals/timeline.js";
 import type * as lib_reader_automated from "../lib/reader/automated.js";
 import type * as lib_reader_deadline from "../lib/reader/deadline.js";
+import type * as lib_reader_firecrawl from "../lib/reader/firecrawl.js";
 import type * as lib_reader_waiting from "../lib/reader/waiting.js";
 import type * as lib_rulings_parse from "../lib/rulings/parse.js";
 import type * as lib_rulings_token from "../lib/rulings/token.js";
@@ -56,12 +62,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "adapters/ports": typeof adapters_ports;
+  "adapters/resolve": typeof adapters_resolve;
+  "adapters/vendors": typeof adapters_vendors;
   crons: typeof crons;
   demo: typeof demo;
   digest: typeof digest;
   drafter: typeof drafter;
   events: typeof events;
   facts: typeof facts;
+  health: typeof health;
   http: typeof http;
   install: typeof install;
   knowledge: typeof knowledge;
@@ -72,6 +82,7 @@ declare const fullApi: ApiFromModules<{
   "lib/knowledge/domain": typeof lib_knowledge_domain;
   "lib/knowledge/links": typeof lib_knowledge_links;
   "lib/knowledge/rank": typeof lib_knowledge_rank;
+  "lib/llm/baseUrl": typeof lib_llm_baseUrl;
   "lib/llm/embed": typeof lib_llm_embed;
   "lib/llm/openaiCompat": typeof lib_llm_openaiCompat;
   "lib/mail/agentmail": typeof lib_mail_agentmail;
@@ -82,6 +93,7 @@ declare const fullApi: ApiFromModules<{
   "lib/proposals/timeline": typeof lib_proposals_timeline;
   "lib/reader/automated": typeof lib_reader_automated;
   "lib/reader/deadline": typeof lib_reader_deadline;
+  "lib/reader/firecrawl": typeof lib_reader_firecrawl;
   "lib/reader/waiting": typeof lib_reader_waiting;
   "lib/rulings/parse": typeof lib_rulings_parse;
   "lib/rulings/token": typeof lib_rulings_token;

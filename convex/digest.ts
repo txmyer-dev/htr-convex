@@ -12,7 +12,8 @@ import { internalAction, internalMutation, type ActionCtx, type MutationCtx } fr
 import { appendEvent } from "./events";
 import { renderDigest, type DigestItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
-import { notification, ntfyConfig, push } from "./lib/notify/ntfy";
+import { notifyClaw } from "./adapters/resolve";
+import { noticeFor } from "./lib/notify/ntfy";
 import { rulingLinks } from "./lib/rulings/token";
 import { expire, pendingFor } from "./proposals";
 import { liveSurfaceUrl, rulingSecret, siteUrl } from "./surface";
@@ -134,15 +135,15 @@ export const markPushed = internalMutation({
 
 /** Each item not yet on the owner's phone, as its own notification. A failed push is retried next digest. */
 async function pushNew(ctx: ActionCtx, tenant: Doc<"tenants">, built: BuiltDigest): Promise<number> {
-  const cfg = ntfyConfig();
-  if (!cfg) return 0;
+  const notify = notifyClaw(tenant);
+  if (!notify) return 0;
   const base = `${siteUrl()}/rulings`;
   const surface = await liveSurfaceUrl(tenant.slug);
   let sent = 0;
   for (const { proposalId, item, pushed } of built.items) {
     if (pushed) continue;
     try {
-      await push(cfg, notification(cfg, item, await rulingLinks(base, rulingSecret(), tenant.slug, proposalId), surface));
+      await notify.push(noticeFor(item, await rulingLinks(base, rulingSecret(), tenant.slug, proposalId), surface));
       await ctx.runMutation(internal.digest.markPushed, { proposalId });
       sent++;
     } catch (e) {
@@ -160,7 +161,7 @@ export const run = internalAction({
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
     await pushNew(ctx, tenant, built);
-    if (!tenant.channels.inboxId && ntfyConfig()) return built.digestId; // the phone is the channel; no inbox to mail from
+    if (!tenant.channels.inboxId && notifyClaw(tenant)) return built.digestId; // the phone is the channel; no inbox to mail from
     if (tenant.owner.weeklyDigest && !weekly) return built.digestId; // pushes now, the email on its weekly day
     const mail = await digestEmail(tenant, built, weekly);
     const ref = await ctx.runAction(internal.mail.sendToOwner, { tenantId, ...mail });

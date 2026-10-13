@@ -122,7 +122,7 @@ describe("ruled, written, read back", () => {
     expect(sent).toMatchObject({ status: "sent", sentRef: "86abc" });
     expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0); // a task is not a message
 
-    expect(await t.query(internal.tasks.openTasks, {})).toEqual([{ proposalId: p._id, ref: "86abc" }]);
+    expect(await t.query(internal.tasks.openTasks, {})).toEqual([{ tenantId: tenant._id, proposalId: p._id, ref: "86abc" }]);
     await t.mutation(internal.tasks.noteTask, { proposalId: p._id, url: "https://app.clickup.com/t/86abc", status: "complete", done: true });
     const states = await t.query(internal.tasks.callItemStates, { tenantId: tenant._id });
     expect(states).toEqual([expect.objectContaining({ session: "s1", itemId: "i263", status: "live", task: { url: "https://app.clickup.com/t/86abc", status: "complete", done: true } })]);

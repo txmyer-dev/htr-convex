@@ -18,12 +18,12 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
-import { profileSender, retrieve, scrape, type Profile } from "./knowledge";
+import { llmClaw, readerClaw } from "./adapters/resolve";
+import { profileSender, retrieve, type Profile } from "./knowledge";
 import { MAX_LESSONS, toLessons, type Lesson } from "./lib/drafter/lessons";
 import { notesFromChunks } from "./lib/knowledge/chunk";
 import { linksIn } from "./lib/knowledge/links";
 import { rankPages } from "./lib/knowledge/rank";
-import { chatCompletion } from "./lib/llm/openaiCompat";
 import { findDeadline } from "./lib/reader/deadline";
 import { latestUnanswered, type Msg } from "./lib/reader/waiting";
 import { bySource, pendingFor, propose, supersede } from "./proposals";
@@ -120,22 +120,7 @@ export function toDraft(content: string, req: DraftRequest): Draft {
   return { body: body.slice(0, 1200), basis: basis.length ? basis : [req.theirMessage.trim().slice(0, 300)], ...(gap ? { gap } : {}) };
 }
 
-export const OPENAI_DEFAULT = "https://api.openai.com/v1";
-
-/**
- * OPENAI_BASE_URL as people actually write it: blank, a bare host, no scheme, no /v1, a
- * trailing slash. Always returns a full URL: the SDK reads the raw env var itself when given
- * nothing, which is exactly the value being repaired here.
- */
-export function normalizeBaseUrl(raw: string | undefined): string {
-  let s = (raw ?? "").trim().replace(/\/+$/, "");
-  if (!s) return OPENAI_DEFAULT;
-  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
-  const u = new URL(s);
-  if (u.pathname === "" || u.pathname === "/") u.pathname = "/v1";
-  return u.toString().replace(/\/+$/, "");
-}
-
+export { normalizeBaseUrl, OPENAI_DEFAULT } from "./lib/llm/baseUrl";
 /** The user turn: everything the model may draw on, as one JSON object. */
 export function userPayload(req: DraftRequest): string {
   const lessons = req.lessons ?? [];
@@ -152,17 +137,10 @@ export function userPayload(req: DraftRequest): string {
   });
 }
 
-export async function callModel(req: DraftRequest): Promise<Draft> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || "gpt-5-mini";
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not set on the deployment");
-  const content = await chatCompletion({
-    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
-    apiKey,
-    model,
-    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: userPayload(req) }],
-    json: true,
-  });
+export async function callModel(req: DraftRequest, tenant: Doc<"tenants"> | null): Promise<Draft> {
+  const llm = llmClaw(tenant);
+  if (!llm) throw new Error("no model claw: set OPENAI_API_KEY (or the tenant's adapters.llm)");
+  const content = await llm.chat([{ role: "system", content: SYSTEM }, { role: "user", content: userPayload(req) }], { json: true });
   return toDraft(content, req);
 }
 
@@ -301,14 +279,14 @@ export const LINK_CAP = 5_000;
  * The pages a message links to, read by Firecrawl now (at most two, a slice of each). A page
  * that will not read is skipped and noted; the draft still goes out, resting on the rest.
  */
-export async function readLinks(ctx: ActionCtx, msg: Doc<"messages">): Promise<Array<{ url: string; title?: string; markdown: string; fetchedAt: number }>> {
-  const key = process.env.FIRECRAWL_API_KEY;
+export async function readLinks(ctx: ActionCtx, msg: Doc<"messages">, tenant: Doc<"tenants"> | null): Promise<Array<{ url: string; title?: string; markdown: string; fetchedAt: number }>> {
+  const reader = readerClaw(tenant);
   const urls = linksIn(msg.body);
-  if (!key || urls.length === 0) return [];
+  if (!reader || urls.length === 0) return [];
   const out: Array<{ url: string; title?: string; markdown: string; fetchedAt: number }> = [];
   for (const url of urls) {
     try {
-      const page = await scrape(url, key, fetch, LINK_CAP);
+      const page = await reader.scrape(url, LINK_CAP);
       out.push({ url: page.url, title: page.title, markdown: page.markdown, fetchedAt: Date.now() });
     } catch (e) {
       await ctx.runMutation(internal.drafter.noteEvent, { tenantId: msg.tenantId, kind: "link.failed", payload: { url, error: String(e).slice(0, 200) } });
@@ -337,13 +315,13 @@ export const draft = internalAction({
     const prior = thread.filter((m) => m._id !== msg._id).slice(-6).map((m) => `${m.direction}: ${m.body}`);
     const name = msg.meta.name ?? c.contact?.name; // the name on this message first: the address may be shared (the front door's pretend customers all write from one inbox)
     // First contact from a company address: read their site before writing to them.
-    const profile = await profileSender(ctx, c.contact);
+    const profile = await profileSender(ctx, c.contact, tenant);
     // The pages they linked: "can you quote this?" is a question about what is behind the link.
-    const linkNotes = await readLinks(ctx, msg);
+    const linkNotes = await readLinks(ctx, msg, tenant);
     // The site, as much of it as speaks to the message: the vector index's pick of chunks when the
     // site has been embedded; otherwise whole pages ranked by the words they share with the message.
     const question = `${msg.meta.subject ?? ""} ${msg.body}`;
-    const picked = await retrieve(ctx, msg.tenantId, question);
+    const picked = await retrieve(ctx, tenant, question);
     const fromChunks = picked && picked.length ? notesFromChunks(withHomepage(picked, c.knowledge)) : undefined;
     const notes = fromChunks
       ? { text: fromChunks.text, used: fromChunks.used.map((url) => c.knowledge.find((k) => k.url === url) ?? { url, title: undefined, fetchedAt: Date.now() }) }
@@ -356,7 +334,7 @@ export const draft = internalAction({
       linkNotes: linkNotes.map((l) => ({ url: l.url, title: l.title, text: l.markdown })),
       facts: c.facts.map((f) => ({ question: f.question, answer: f.statement ?? f.answer })),
     };
-    const d = await callModel(req);
+    const d = await callModel(req, tenant);
     const grounding = {
       site: notes ? notes.used.map((k) => ({ url: k.url, title: k.title, fetchedAt: k.fetchedAt })) : undefined,
       sender: profile ? { url: profile.url, title: profile.title, fetchedAt: profile.fetchedAt } : undefined,
