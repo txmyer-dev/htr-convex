@@ -208,6 +208,7 @@ describe("read and record", () => {
     const mail = await digestEmail(tenant, built);
     expect(mail.subject).toBe("4 waiting on you · 1 meeting");
     expect(mail.html).toContain(">Meetings</h2>");
+    expect(built.body).not.toContain("with Ben Hidalgo, Tony Myers"); // the owner isn't "with" themselves
     const again = (await t.mutation(internal.digest.build, { tenantId: tenant._id }))!;
     expect(again.meetings).toHaveLength(0);
   });

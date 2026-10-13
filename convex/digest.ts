@@ -60,7 +60,7 @@ export const build = internalMutation({
     const waiting = numbered.length
       ? renderDigest(numbered.map(([n, p]) => [n, p] as [number, DigestItem]), { timeZone: tenant.timeZone, nowMs: now })
       : "";
-    const body = [waiting, renderMeetings(meetings, tenant.timeZone, tenant.owner.names)].filter(Boolean).join("\n\n");
+    const body = [waiting, renderMeetings(meetings, tenant.timeZone, ownerOf(tenant))].filter(Boolean).join("\n\n");
     const digestId = await ctx.db.insert("digests", {
       tenantId,
       mapping: numbered.map(([n, p]) => ({ n, proposalId: p._id })),
@@ -128,7 +128,7 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest, we
   const meetingHtml = met
     ? `<h2 style="font-size:1.05rem;margin:24px 0 8px">Meetings</h2>` +
       built.meetings.map(({ item }) =>
-        `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0;white-space:pre-wrap">${escapeHtml(renderMeeting(item, tenant.timeZone, tenant.owner.names))}</div>`).join("")
+        `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0;white-space:pre-wrap">${escapeHtml(renderMeeting(item, tenant.timeZone, ownerOf(tenant)))}</div>`).join("")
     : "";
   const html =
     `<div style="font-family:system-ui,sans-serif;color:#1d222c;max-width:640px">` +
@@ -141,6 +141,9 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest, we
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+
+/** How the owner shows up in an attendee list: by name, or by address. */
+const ownerOf = (t: Doc<"tenants">) => [...t.owner.names, t.owner.email];
 
 export const markPushed = internalMutation({
   args: { proposalId: v.id("proposals") },
