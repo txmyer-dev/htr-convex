@@ -6,3 +6,6 @@ dist/
 *.log
 .DS_Store
 
+
+# a self-hosted install (npm run setup)
+.htr-install.json

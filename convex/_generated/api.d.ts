@@ -53,6 +53,7 @@ import type * as lib_tasks_intake from "../lib/tasks/intake.js";
 import type * as lib_time from "../lib/time.js";
 import type * as mail from "../mail.js";
 import type * as meetings from "../meetings.js";
+import type * as migrations from "../migrations.js";
 import type * as proposals from "../proposals.js";
 import type * as rulings from "../rulings.js";
 import type * as surface from "../surface.js";
@@ -112,6 +113,7 @@ declare const fullApi: ApiFromModules<{
   "lib/time": typeof lib_time;
   mail: typeof mail;
   meetings: typeof meetings;
+  migrations: typeof migrations;
   proposals: typeof proposals;
   rulings: typeof rulings;
   surface: typeof surface;

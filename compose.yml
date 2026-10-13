@@ -1,0 +1,64 @@
+# One Hold the Room install: the open-source Convex backend, its dashboard, and Caddy for TLS.
+# `npm run setup` writes .env (domains, instance secret) and brings this up; see INSTALL.md.
+#
+#   https://$HTR_DOMAIN       -> backend :3211  HTTP actions + the owner's page (webhooks, rulings, OAuth)
+#   https://$HTR_API_DOMAIN   -> backend :3210  the Convex API the page talks to (websocket)
+#   127.0.0.1:6791            dashboard, never public: reach it over `ssh -L 6791:127.0.0.1:6791`
+#
+# Images are pinned to the build HTR was verified on; `npm run update` keeps them as the repo says.
+name: htr
+
+services:
+  backend:
+    image: ghcr.io/get-convex/convex-backend:${CONVEX_IMAGE_TAG:-5c7cb5bc7db457290f1769f95f1d1340912f7fd7}
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:3210:3210"
+      - "127.0.0.1:3211:3211"
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      INSTANCE_NAME: htr
+      INSTANCE_SECRET: ${INSTANCE_SECRET:?run npm run setup first}
+      CONVEX_CLOUD_ORIGIN: https://${HTR_API_DOMAIN:?run npm run setup first}
+      CONVEX_SITE_ORIGIN: https://${HTR_DOMAIN:?run npm run setup first}
+      DISABLE_BEACON: "true"
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_IMAGE_TAG:-5c7cb5bc7db457290f1769f95f1d1340912f7fd7}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6791:6791"
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: http://127.0.0.1:3210
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      HTR_DOMAIN: ${HTR_DOMAIN}
+      HTR_API_DOMAIN: ${HTR_API_DOMAIN}
+    depends_on:
+      - backend
+
+volumes:
+  convex-data:
+  caddy-data:
+  caddy-config:

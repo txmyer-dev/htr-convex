@@ -1,0 +1,9 @@
+# TLS for both public names; certificates come from Let's Encrypt on first request.
+{$HTR_DOMAIN} {
+	encode gzip
+	reverse_proxy backend:3211
+}
+
+{$HTR_API_DOMAIN} {
+	reverse_proxy backend:3210
+}

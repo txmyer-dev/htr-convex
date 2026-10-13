@@ -16,10 +16,23 @@ function params() {
   return { slug: u.searchParams.get("t") ?? "", key: u.searchParams.get("k") ?? "" };
 }
 
+// The hackathon's try-it form is opt-in (VITE_HTR_FRONT_DOOR=1 at build time). A self-hosted
+// install has one owner, who arrives with their link; anyone else sees a closed door.
+const FRONT_DOOR = import.meta.env.VITE_HTR_FRONT_DOOR === "1";
+
 export default function App() {
   const { slug, key } = params();
-  if (!slug || !key) return <FrontDoor />;
+  if (!slug || !key) return FRONT_DOOR ? <FrontDoor /> : <Private />;
   return <Surface slug={slug} keyToken={key} />;
+}
+
+function Private() {
+  return (
+    <main className="shell front">
+      <h1>Hold the Room</h1>
+      <p className="lede">This is a private install. The owner opens it from the link in their digest.</p>
+    </main>
+  );
 }
 
 // ---- the front door ---------------------------------------------------------------------------

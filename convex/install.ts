@@ -82,3 +82,54 @@ export const ownerLink = internalQuery({
   args: { slug: v.string() },
   handler: async (_ctx, { slug }): Promise<string> => await liveSurfaceUrl(slug),
 });
+
+// ---- a self-hosted install (npm run setup) ----------------------------------------------------------
+
+/**
+ * The one tenant of a self-hosted install, from setup's answers rather than TENANTS. Idempotent:
+ * re-running setup updates the block and keeps the runtime state (the Gmail grant, the hold).
+ */
+export const create = internalMutation({
+  args: {
+    slug: v.string(),
+    displayName: v.string(),
+    timeZone: v.string(),
+    owner: v.object({ name: v.string(), email: v.string(), digestAt: v.string(), quietHours: v.optional(v.array(v.string())) }),
+    business: v.object({ agentName: v.string(), site: v.optional(v.string()) }),
+    tasks: v.optional(v.object({ clickupListId: v.string(), listName: v.string(), teamId: v.optional(v.string()) })),
+    mail: v.union(v.literal("gmail"), v.literal("agentmail")),
+  },
+  handler: async (ctx, a) => {
+    if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(a.slug)) throw new Error("slug: lowercase letters, digits and dashes");
+    if (a.owner.digestAt !== "immediate" && !/^\d{2}:\d{2}$/.test(a.owner.digestAt)) throw new Error('digestAt: "immediate" or HH:MM');
+    new Intl.DateTimeFormat("en-US", { timeZone: a.timeZone }); // throws on an unknown zone
+    const first = a.owner.name.trim().split(/\s+/)[0];
+    return await upsert(ctx, {
+      slug: a.slug,
+      displayName: a.displayName,
+      timeZone: a.timeZone,
+      owner: {
+        name: first, names: [...new Set([first, a.owner.name.trim()])], email: a.owner.email.toLowerCase(), digestAt: a.owner.digestAt,
+        quietHours: a.owner.quietHours, defaultDeadlineDays: 2, discloseAssistant: true, autonomyTier: 0,
+      },
+      business: { agentName: a.business.agentName, site: a.business.site },
+      tasks: a.tasks,
+      channels: {},
+      adapters: a.mail === "gmail" ? { mail: { kind: "gmail" } } : undefined,
+    });
+  },
+});
+
+/** What setup and update print: is Gmail connected, and how did every claw do on the last beat. */
+export const status = internalQuery({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) => {
+    const t = await ctx.db.query("tenants").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();
+    if (!t) return null;
+    const claws = await ctx.db.query("clawHealth").withIndex("by_tenant_port", (q) => q.eq("tenantId", t._id)).take(20);
+    return {
+      gmail: t.channels.gmail ? { address: t.channels.gmail.address, grantedAt: t.channels.gmail.grantedAt } : null,
+      claws: claws.map((c) => ({ port: c.port, adapter: c.adapter ?? null, ok: c.ok, error: c.error ?? null, at: c.at })),
+    };
+  },
+});

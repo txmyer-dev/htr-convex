@@ -122,6 +122,9 @@ export default defineSchema({
     .index("by_tenant_meeting", ["tenantId", "meetingId"])
     .index("by_tenant_digest", ["tenantId", "digestId"]),
 
+  // Which data migrations this deployment has run (migrations.ts).
+  migrations: defineTable({ name: v.string(), at: v.number() }).index("by_name", ["name"]),
+
   // Where each pulled mailbox (Gmail) last read up to. One row per tenant, moved after every successful pull.
   mailCursors: defineTable({ tenantId: v.id("tenants"), at: v.number() }).index("by_tenant", ["tenantId"]),
 

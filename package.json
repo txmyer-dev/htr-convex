@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p convex/tsconfig.json --noEmit",
     "deploy": "npx @convex-dev/static-hosting deploy",
-    "deploy:dev": "npx @convex-dev/static-hosting upload --build"
+    "deploy:dev": "npx @convex-dev/static-hosting upload --build",
+    "setup": "node scripts/setup.mjs",
+    "update": "node scripts/update.mjs"
   },
   "dependencies": {
     "@convex-dev/static-hosting": "^0.2.1",
