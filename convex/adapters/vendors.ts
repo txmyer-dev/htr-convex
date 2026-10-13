@@ -2,6 +2,7 @@
 // environment or the tenant: ./resolve.ts hands each one its credentials.
 
 import { AgentMail } from "../lib/mail/agentmail";
+import { Gmail, type GmailCreds } from "../lib/mail/gmail";
 import { chatCompletion } from "../lib/llm/openaiCompat";
 import { embed } from "../lib/llm/embed";
 import { push } from "../lib/notify/ntfy";
@@ -29,6 +30,25 @@ export function agentMail(apiKey: string, inboxId: string, f: Fetch = fetch): Ma
       return { ref: r.messageId, threadId: r.threadId };
     },
     probe: () => ok(f, `https://api.agentmail.to/v0/inboxes/${encodeURIComponent(inboxId)}`, { headers: { authorization: `Bearer ${apiKey}` } }, "AgentMail"),
+  };
+}
+
+export function gmail(creds: GmailCreds, address: string | undefined, f: Fetch = fetch): MailClaw {
+  const c = new Gmail(creds, address, f);
+  return {
+    name: "gmail",
+    send: async (m) => {
+      const r = await c.send(m);
+      return { ref: r.messageId, threadId: r.threadId };
+    },
+    reply: async (messageId, m) => {
+      const r = await c.reply(messageId, m);
+      return { ref: r.messageId, threadId: r.threadId };
+    },
+    pull: (sinceMs, seen) => c.pull(sinceMs, seen),
+    probe: async () => {
+      await c.profile();
+    },
   };
 }
 

@@ -4,6 +4,7 @@
 // ruled proposal (_decisions#integrations-are-the-claws).
 
 import type { ChatMessage } from "../lib/llm/openaiCompat";
+import type { InboundMail } from "../lib/mail/inbound";
 import type { AgendaTask, NewTask, TaskState } from "../lib/tasks/clickup";
 
 export type Sent = { ref: string; threadId?: string };
@@ -15,6 +16,8 @@ export interface MailClaw extends Probe {
   send(m: { to: string[]; cc?: string[]; subject: string; text: string; html?: string; headers?: Record<string, string> }): Promise<Sent>;
   /** A reply in the thread of a message this adapter delivered (its vendor id). */
   reply(messageId: string, m: { text: string; html?: string }): Promise<Sent>;
+  /** A mailbox HTR reads rather than one that calls in (Gmail): mail since `sinceMs`, oldest first, minus the ids `seen` names. */
+  pull?(sinceMs: number, seen?: (ids: string[]) => Promise<string[]>): Promise<InboundMail[]>;
 }
 
 export interface TaskClaw extends Probe {

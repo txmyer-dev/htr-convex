@@ -6,6 +6,8 @@
 //   GET  /tenants/{slug}/proposals?k=          every proposal and its status, JSON
 //   POST|GET /intake/{slug}/call-items          the call line: items in, their states out; bearer intake key
 //   GET  /intake/{slug}/agenda?tag=raise-<series>  what waits to be raised at that series' next call
+//   GET  /oauth/google/{slug}/start?k=         the owner connects their Gmail (surface key); Google returns to
+//   GET  /oauth/google/callback                 ...here, exactly this, registered on the OAuth client
 //   GET  /healthz
 //   GET  /  and everything else                the live surface (src/, built and uploaded by the static hosting
 //                                              component; /?t={slug}&k= is the owner's link)
@@ -15,6 +17,7 @@ import { httpRouter } from "convex/server";
 import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
+import { finishConsent, readState, startConsent } from "./gmail";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
@@ -90,6 +93,44 @@ http.route({
     if (mail.inboxId && mail.inboxId !== tenant.channels.inboxId) return json({ ok: true, ignored: "other inbox" });
     const outcome = await ctx.runMutation(internal.mail.receive, { tenantId: tenant._id, mail });
     return json({ ok: true, outcome });
+  }),
+});
+
+// ---- Gmail consent ---------------------------------------------------------------------------------
+
+http.route({
+  pathPrefix: "/oauth/google/",
+  method: "GET",
+  handler: httpAction(async (ctx, req) => {
+    const url = new URL(req.url);
+    const [first, second] = segments(req.url, "/oauth/google/");
+    if (second === "start") {
+      if (!tokenEquals(await surfaceKey(first), url.searchParams.get("k") ?? "")) return page("<p>That link is not valid.</p>", 401);
+      const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug: first });
+      if (!tenant) return page("<p>Unknown tenant.</p>", 404);
+      if (tenant.adapters?.mail?.kind !== "gmail") return page("<p>This install doesn't read Gmail (adapters.mail.kind is not \"gmail\").</p>", 400);
+      return new Response(null, { status: 302, headers: { location: await startConsent(tenant) } });
+    }
+    if (first !== "callback" || second) return page("<p>Not found.</p>", 404);
+    const error = url.searchParams.get("error");
+    if (error) return page(`<p>Google said: ${escapeHtml(error)}. Nothing was connected.</p>`, 400);
+    const slug = await readState(url.searchParams.get("state") ?? "");
+    if (!slug) return page("<p>That consent expired or didn't start here. Open the connect link again.</p>", 400);
+    const tenant = await ctx.runQuery(internal.tenants.bySlug, { slug });
+    if (!tenant) return page("<p>Unknown tenant.</p>", 404);
+    let got: { address: string; refreshToken: string; scope: string };
+    try {
+      got = await finishConsent(tenant, url.searchParams.get("code") ?? "");
+    } catch (e) {
+      return page(`<p>${escapeHtml(String(e instanceof Error ? e.message : e))}</p>`, 502);
+    }
+    if (!/gmail\.readonly/.test(got.scope) || !/gmail\.send/.test(got.scope)) {
+      return page("<p>Both boxes need ticking: read and send. Open the connect link again and allow both.</p>", 400);
+    }
+    await ctx.runMutation(internal.gmail.saveGrant, { tenantId: tenant._id, address: got.address, refreshToken: got.refreshToken });
+    const other = got.address !== tenant.owner.email.toLowerCase()
+      ? `<p style="color:#8a5a00">Note: this is not the owner address on file (${escapeHtml(tenant.owner.email)}). Rulings by email still come from that one.</p>` : "";
+    return page(`<h1 style="font-size:1.2rem">Gmail connected</h1><p>Hold the Room now reads ${escapeHtml(got.address)} and replies from it, in thread, only when you say so.</p>${other}`);
   }),
 });
 

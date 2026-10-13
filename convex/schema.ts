@@ -41,6 +41,9 @@ export const tenantFields = {
     inboxAddress: v.optional(v.string()),
     webhookId: v.optional(v.string()),
     webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
+    // The owner's Gmail consent (GET /oauth/google/{slug}/start): kept here like the webhook secret,
+    // because consent arrives over HTTP and an HTTP route cannot set an env var. GOOGLE_REFRESH_TOKEN is the fallback.
+    gmail: v.optional(v.object({ address: v.string(), refreshToken: v.string(), grantedAt: v.number() })),
   }),
   // Where approved tasks go (kind "task" proposals). The token is CLICKUP_API_TOKEN on the deployment.
   // byLane sends a call's items to that entity's list (the line's lane); anything else goes to the default.
@@ -53,7 +56,12 @@ export const tenantFields = {
   // never sit here: a field ending in Env names the deployment env var that holds one. Absent,
   // a claw falls back to the deployment-wide env vars (one install, one tenant).
   adapters: v.optional(v.object({
-    mail: v.optional(v.object({ kind: v.literal("agentmail"), keyEnv: v.optional(v.string()) })),
+    mail: v.optional(v.union(
+      v.object({ kind: v.literal("agentmail"), keyEnv: v.optional(v.string()) }),
+      // The owner's own Gmail (lib/mail/gmail.ts): pulled on a cron, replies sent as the owner, in thread.
+      // The OAuth client is the install's own; the refresh token comes from consent (channels.gmail).
+      v.object({ kind: v.literal("gmail"), clientIdEnv: v.optional(v.string()), clientSecretEnv: v.optional(v.string()) }),
+    )),
     notify: v.optional(v.object({ kind: v.literal("ntfy"), topic: v.string(), url: v.optional(v.string()), tokenEnv: v.optional(v.string()) })),
     tasks: v.optional(v.object({ kind: v.literal("clickup"), tokenEnv: v.optional(v.string()) })),
     reader: v.optional(v.object({ kind: v.literal("firecrawl"), keyEnv: v.optional(v.string()) })),
@@ -90,6 +98,9 @@ export default defineSchema({
     error: v.optional(v.string()),
     at: v.number(),
   }).index("by_tenant_port", ["tenantId", "port"]),
+
+  // Where each pulled mailbox (Gmail) last read up to. One row per tenant, moved after every successful pull.
+  mailCursors: defineTable({ tenantId: v.id("tenants"), at: v.number() }).index("by_tenant", ["tenantId"]),
 
   messages: defineTable({
     tenantId: v.id("tenants"),

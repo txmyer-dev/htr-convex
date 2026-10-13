@@ -23,7 +23,9 @@ export const setChannels = internalMutation({
     webhookId: v.optional(v.string()), webhookSecret: v.optional(v.string()),
   },
   handler: async (ctx, { tenantId, ...channels }) => {
-    await ctx.db.patch(tenantId, { channels });
+    const t = await ctx.db.get(tenantId);
+    if (!t) throw new Error("unknown tenant");
+    await ctx.db.patch(tenantId, { channels: { ...t.channels, ...channels } }); // a Gmail grant stays
   },
 });
 
