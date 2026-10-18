@@ -1,3 +1,8 @@
+> **Superseded 2026-10-18.** Live HTR is now self-hosted Convex on the GCP VM
+> (`htr.34-136-84-15.sslip.io`); `famous-spider-906` and `brave-sockeye-180` are retired —
+> **do not deploy to them.** AgentMail holds only `tony-htr`. Current plan:
+> `~/wiki/02-PROJECTS/felani-am/crew-launch-handoff.md`.
+
 # Handoff — one HTR: core → claws → extensions
 
 *Started 2026-10-13 on Tony's Windows laptop (phases 1–2); updated the same day on **hostvps**
