@@ -65,7 +65,7 @@ describe("intake", () => {
     expect(await t.mutation(internal.tasks.receiveCallItems, args)).toMatchObject({ proposed: 0, already: 2 });
     const rows = await tasks(t);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ status: "pending", toName: "WotAI — tasks", body: "Message Alex Kim on Discord", sourceKind: "call_item", sourceId: "20261009-wotai-ff:i263" });
+    expect(rows[0]).toMatchObject({ status: "pending", toName: "WotAI – Actions", body: "Message Alex Kim on Discord", sourceKind: "call_item", sourceId: "20261009-wotai-ff:i263" });
     expect(rows[0].summary).toBe("Task: “Message Alex Kim on Discord”");
     expect(rows[0].basis).toEqual(["I'll ping you on Discord after this."]);
     expect(rows.map((r) => r.body)).not.toContain("Alyx's situation");
@@ -97,8 +97,8 @@ describe("which list", () => {
     ] });
     const by = Object.fromEntries((await tasks(t)).map((p) => [p.body, [p.toName, p.meta.task?.listId]]));
     expect(by).toEqual({
-      one: ["WotAI — tasks", "901422018604"], two: ["felani.am — tasks", "901422018603"],
-      three: ["bnF - Tasks", "901422175144"], four: ["Tony – Tasks", "901421901184"],
+      one: ["WotAI – Actions", "901422331563"], two: ["felani.am – Actions", "901422331569"],
+      three: ["bF – Actions", "901422331561"], four: ["00 Inbox", "901422331534"],
     });
   });
 });
@@ -175,7 +175,7 @@ describe("raise next time", () => {
       item({ id: "r1", type: "raise_next", what: "Ask Alex about the call format", destination: "clickup.agenda", series: "WotAI Q&A" }),
     ] });
     const [p] = await tasks(t);
-    expect(p.toName).toBe("next WotAI Q&A (WotAI — tasks)");
+    expect(p.toName).toBe("next WotAI Q&A (WotAI – Actions)");
     expect(p.meta.task?.tag).toBe("raise-wotai-q-a");
   });
 

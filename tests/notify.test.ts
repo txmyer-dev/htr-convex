@@ -61,11 +61,11 @@ describe("the digest run", () => {
     await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [item] });
 
     await t.action(internal.digest.run, { tenantId: tenant._id });
-    expect(sent.map((s) => s.title)).toEqual(["Task → WotAI — tasks"]);
+    expect(sent.map((s) => s.title)).toEqual(["Task → WotAI – Actions"]);
 
     await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [{ ...item, id: "i2", what: "Message Alex" }] });
     await t.action(internal.digest.run, { tenantId: tenant._id });
-    expect(sent.map((s) => s.title)).toEqual(["Task → WotAI — tasks", "Task → WotAI — tasks"]);
+    expect(sent.map((s) => s.title)).toEqual(["Task → WotAI – Actions", "Task → WotAI – Actions"]);
     expect(sent).toHaveLength(2); // the first item was not pushed again
   });
 
