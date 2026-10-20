@@ -8,7 +8,7 @@ import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import { TENANTS } from "../convex/install";
 import { CALENDAR_OWNED, CALENDAR_READ, GMAIL_READ, GMAIL_SEND } from "../convex/lib/google/auth";
-import { eventIdFor } from "../convex/mail";
+import { eventIdFor } from "../convex/lib/calendar/id";
 import schema from "../convex/schema";
 import { surfaceKey } from "../convex/surface";
 

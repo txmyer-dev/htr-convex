@@ -2,6 +2,8 @@
 // it, merged by time. The surface shows it under every ruled item ("what did it actually do?").
 // Pure: the query hands over the rows, this decides what each one says.
 
+import type { CardEvent } from "./lifecycle";
+
 // `_creationTime` orders the two tables into one story: it is unique and increasing where `at` can tie.
 export type TimelineEvent = { kind: string; payload: unknown; at: number; _creationTime: number };
 export type TimelineRuling = { from: string; verdict: string; at: number; _creationTime: number };
@@ -26,8 +28,8 @@ function firstLine(text: string | undefined, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-/** `event`: the card's calendar operation, for an event card. */
-export function describeEvent(kind: string, payload: unknown, site: boolean, event?: string): Omit<Step, "at"> | null {
+/** `eventOp`: the card's calendar operation, for an event card. */
+export function describeEvent(kind: string, payload: unknown, site: boolean, eventOp?: CardEvent["op"]): Omit<Step, "at"> | null {
   const p = (payload && typeof payload === "object" ? payload : {}) as P;
   switch (kind) {
     case "proposal.created":
@@ -36,8 +38,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean, eve
       return { text: "Drafted from their message", tone: "ok" };
     case "proposal.sent":
       if (site) return { text: "Sent to your website's agent, signed, with you copied", tone: "ok" };
-      if (event === "move") return { text: "Moved on your calendar, update sent, replied in thread", tone: "ok" };
-      if (event) return { text: "Added to your calendar, invite sent, replied in thread", tone: "ok" };
+      if (eventOp === "move") return { text: "Moved on your calendar, update sent, replied in thread", tone: "ok" };
+      if (eventOp) return { text: "Added to your calendar, invite sent, replied in thread", tone: "ok" };
       return { text: p.edited ? "Sent in their thread, in your words" : "Sent in their thread", tone: "ok" };
     case "proposal.send_failed":
       // The row above already shows the whole error; the story needs only its start.
@@ -101,7 +103,7 @@ function pending(status: string, site: boolean, last: TimelineEvent | undefined)
 }
 
 export function buildTimeline(
-  proposal: { kind: string; status: string; meta?: { event?: { op: string } } },
+  proposal: { kind: string; status: string; meta?: { event?: { op: CardEvent["op"] } } },
   events: TimelineEvent[],
   rulings: TimelineRuling[],
 ): Step[] {

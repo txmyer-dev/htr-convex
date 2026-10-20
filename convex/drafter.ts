@@ -21,6 +21,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
+import { calendarGranted } from "./calendar";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
 import type { CalendarClaw } from "./adapters/ports";
@@ -35,7 +36,8 @@ import { rankPages } from "./lib/knowledge/rank";
 import { findDeadline } from "./lib/reader/deadline";
 import { latestUnanswered, type Msg } from "./lib/reader/waiting";
 import { bySource, pendingFor, propose, redraftable, supersede } from "./proposals";
-import { grounding } from "./schema";
+import { eventMeta, grounding, interval } from "./schema";
+import { EVENT_LEAD_MS } from "./lib/proposals/lifecycle";
 
 export const SYSTEM =
   "You draft one reply that a business owner will send as themselves. " +
@@ -205,7 +207,10 @@ export const context = internalQuery({
     const prior = msg.vendorRef ? await bySource(ctx, msg.tenantId, msg.channel, msg._id) : null;
     // An event card that expired (unruled, or no longer free at approval) asks for a fresh draft for this message (KTD9).
     const already = prior !== null && !redraftable(prior);
-    const offer = await lastOffer(ctx, inThread.filter((m) => m.direction === "in" && m._id !== msg._id));
+    // Only planSchedule reads the offer, and only for an email to a tenant whose calendar resolves.
+    const offer = msg.channel === "email" && calendarGranted(tenant)
+      ? await lastOffer(ctx, inThread.filter((m) => m.direction === "in" && m._id !== msg._id))
+      : undefined;
     return { msg, tenant, thread: [...thread, ...outbound].sort((a, b) => a.at - b.at), contact, knowledge, facts, lessons, already, offer };
   },
 });
@@ -236,14 +241,9 @@ async function recentLessons(ctx: QueryCtx, tenantId: Id<"tenants">): Promise<Le
   return toLessons(rows);
 }
 
-const interval = v.object({ start: v.number(), end: v.number() });
-const eventCard = v.object({
-  op: v.union(v.literal("insert"), v.literal("move")), title: v.string(), startMs: v.number(), endMs: v.number(), timeZone: v.string(),
-  attendees: v.array(v.string()), targetEventId: v.optional(v.string()), previousStartMs: v.optional(v.number()), previousEndMs: v.optional(v.number()),
-});
+/** An event card as drafted: no event written yet, no clash checked. */
+const eventCard = eventMeta.omit("eventId", "clash");
 
-/** An event card's latest deadline: this long before the meeting starts (KTD9). */
-export const EVENT_LEAD_MS = 2 * 3_600_000;
 
 /** Email and event cards to one address answer the same person: one family for superseding (R9). */
 const family = (kind: Doc<"proposals">["kind"]) => (kind === "event" ? "email" : kind);

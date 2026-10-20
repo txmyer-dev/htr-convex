@@ -14,6 +14,7 @@ import { calendarClaw, mailClaw, notifyClaw } from "./adapters/resolve";
 import type { MailClaw, Notice, Sent } from "./adapters/ports";
 import { checkTime, formatSlot } from "./lib/calendar/availability";
 import { busyFor } from "./lib/calendar/busy";
+import { eventIdFor } from "./lib/calendar/id";
 import { AgentMail } from "./lib/mail/agentmail";
 import { stripFooter, type InboundMail } from "./lib/mail/inbound";
 import { looksAutomated } from "./lib/reader/automated";
@@ -323,14 +324,6 @@ const DISPATCH: Record<Doc<"proposals">["kind"], (tenant: Doc<"tenants">, p: Doc
   },
   event: (tenant, p, ctx) => dispatchEvent(ctx, tenant, p),
 };
-
-/**
- * Google's id for an insert card's event: the proposal id's bytes in lowercase hex. Convex ids use
- * letters past `v`, outside Google's base32hex alphabet; hex stays inside it, and is stable (KTD5).
- */
-export function eventIdFor(proposalId: string): string {
-  return Array.from(new TextEncoder().encode(proposalId), (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /**
  * An event card (KTD5): the calendar write on `primary`, then the reply in thread, idempotent

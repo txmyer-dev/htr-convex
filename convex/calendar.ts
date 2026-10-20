@@ -10,9 +10,9 @@ import { internalAction, internalMutation, internalQuery, query, type ActionCtx,
 import { calendarClaw } from "./adapters/resolve";
 import { checkTime } from "./lib/calendar/availability";
 import { busyFor } from "./lib/calendar/busy";
+import { eventIdFor } from "./lib/calendar/id";
 import { hasCalendar } from "./lib/google/auth";
-import { atLocalHour, localDaysBetween, localParts } from "./lib/time";
-import { eventIdFor } from "./mail";
+import { atLocalHour, localDaysBetween, ymd } from "./lib/time";
 import { requireSurface } from "./surface";
 
 const DAYS = 8; // today and the next 7
@@ -24,8 +24,11 @@ const row = v.object({
   organizerSelf: v.boolean(), responseStatus: v.optional(v.string()),
 });
 
-/** HTR may read this tenant's calendar: the owner's Gmail, granted with the calendar scopes. */
-const readsCalendar = (t: Doc<"tenants">) => !t.demo && t.adapters?.mail?.kind === "gmail" && hasCalendar(t.channels.gmail?.scope);
+/** The owner's Gmail, granted with the calendar scopes: what calendarClaw needs to resolve. */
+export const calendarGranted = (t: Doc<"tenants">) => t.adapters?.mail?.kind === "gmail" && hasCalendar(t.channels.gmail?.scope);
+
+/** HTR may read this tenant's calendar: granted, and not a demo. */
+const readsCalendar = (t: Doc<"tenants">) => !t.demo && calendarGranted(t);
 
 const snapshotOf = (ctx: QueryCtx, tenantId: Id<"tenants">) =>
   ctx.db.query("calendarSnapshots").withIndex("by_tenant", (q) => q.eq("tenantId", tenantId)).unique();
@@ -38,11 +41,6 @@ const rowsOf = (ctx: QueryCtx, tenantId: Id<"tenants">, before: number) =>
 export const tenantsToRefresh = internalQuery({
   args: {},
   handler: async (ctx): Promise<Doc<"tenants">[]> => (await ctx.db.query("tenants").take(200)).filter(readsCalendar),
-});
-
-export const tenantById = internalQuery({
-  args: { tenantId: v.id("tenants") },
-  handler: async (ctx, { tenantId }): Promise<Doc<"tenants"> | null> => await ctx.db.get(tenantId),
 });
 
 /** The new window, whole: the tenant's old rows go, these come in, in one transaction. */
@@ -103,7 +101,7 @@ async function refreshTenant(ctx: ActionCtx, tenant: Doc<"tenants">): Promise<Re
 export const refresh = internalAction({
   args: { tenantId: v.id("tenants") },
   handler: async (ctx, { tenantId }): Promise<RefreshOutcome> => {
-    const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.calendar.tenantById, { tenantId });
+    const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     return tenant ? await refreshTenant(ctx, tenant) : "skipped";
   },
 });
@@ -134,7 +132,7 @@ export const checkClash = internalAction({
     const p: Doc<"proposals"> | null = await ctx.runQuery(internal.proposals.get, { proposalId });
     const ev = p?.meta.event;
     if (!p || p.status !== "pending" || !ev || ev.startMs !== startMs || ev.endMs !== endMs) return null; // ruled, or edited again since
-    const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.calendar.tenantById, { tenantId: p.tenantId });
+    const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId: p.tenantId });
     if (!tenant) return null;
     let clean = false;
     try {
@@ -172,11 +170,6 @@ export const eventsIn = internalQuery({
   handler: async (ctx, { tenantId, startMs, endMs }): Promise<Doc<"calendarEvents">[]> =>
     (await rowsOf(ctx, tenantId, endMs)).filter((e) => e.endMs > startMs),
 });
-
-const ymd = (ms: number, zone: string) => {
-  const p = localParts(ms, zone);
-  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
-};
 
 /**
  * The desk's Today zone: the stored window, one entry per local day in the tenant's zone, each

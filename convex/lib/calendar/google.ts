@@ -4,7 +4,7 @@
 // dispatcher calls them (adapters/ports.ts).
 
 import { accessToken, type GoogleCreds } from "../google/auth";
-import { offsetAt } from "../time";
+import { zonedToMs } from "../time";
 import type { Interval } from "./availability";
 
 const API = "https://www.googleapis.com/calendar/v3";
@@ -52,9 +52,7 @@ class HttpError extends Error {
 /** Local midnight of a `YYYY-MM-DD` date in `timeZone`. */
 function localMidnight(date: string, timeZone: string): number {
   const [y, m, d] = date.split("-").map(Number);
-  const wall = Date.UTC(y, m - 1, d);
-  const first = wall - offsetAt(wall, timeZone);
-  return wall - offsetAt(first, timeZone);
+  return zonedToMs(y, m, d, 0, 0, timeZone);
 }
 
 const instant = (t: Time | undefined, zone: string) => (t?.dateTime ? Date.parse(t.dateTime) : t?.date ? localMidnight(t.date, t.timeZone ?? zone) : NaN);
@@ -130,9 +128,11 @@ export class GoogleCalendar {
   /** Events in the window across `calendarIds` (default: every non-hidden calendar), for display and matching. */
   async events(w: Interval, calendarIds?: string[]): Promise<CalendarEvent[]> {
     const ids = calendarIds ?? (await this.calendars()).map((c) => c.id);
-    const out: CalendarEvent[] = [];
-    for (const id of ids) out.push(...(await this.list(id, w)));
-    return out;
+    // Read at once; a failure throws the first failing calendar's error in `ids` order, as one at a time would.
+    const lists = await Promise.allSettled(ids.map((id) => this.list(id, w)));
+    const failed = lists.find((r) => r.status === "rejected");
+    if (failed) throw failed.reason;
+    return lists.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
   }
 
   /** Busy time per calendar in one request. A calendar with errors, or missing from the answer, lands in `errors`. */

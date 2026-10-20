@@ -8,8 +8,9 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { describeGrounding } from "../convex/lib/knowledge/domain";
+import { EMAIL } from "../convex/lib/mail/inbound";
 import { eventWhen, eventWho, signLabel } from "../convex/lib/proposals/lifecycle";
-import { localParts, offsetAt } from "../convex/lib/time";
+import { hhmm, ymd, zonedToMs } from "../convex/lib/time";
 
 type Row = NonNullable<ReturnType<typeof useQuery<typeof api.proposals.list>>>[number];
 
@@ -337,13 +338,9 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
 
 type CardEvent = NonNullable<Row["event"]>;
 
-const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
-
 /** "YYYY-MM-DD" and "HH:MM" for an instant, in the card's zone (the owner's). */
 function localInputs(ms: number, zone: string) {
-  const p = localParts(ms, zone);
-  const two = (n: number) => String(n).padStart(2, "0");
-  return { date: `${p.year}-${two(p.month)}-${two(p.day)}`, time: `${two(p.hour)}:${two(p.minute)}` };
+  return { date: ymd(ms, zone), time: hhmm(ms, zone) };
 }
 
 /** The instant a local date and time name in `zone`; null when either is incomplete. Two passes cover a DST edge. */
@@ -351,8 +348,7 @@ function fromLocal(date: string, time: string, zone: string): number | null {
   const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   const t = /^(\d{2}):(\d{2})$/.exec(time);
   if (!d || !t) return null;
-  const wall = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]), Number(t[1]), Number(t[2]));
-  return wall - offsetAt(wall - offsetAt(wall, zone), zone);
+  return zonedToMs(Number(d[1]), Number(d[2]), Number(d[3]), Number(t[1]), Number(t[2]), zone);
 }
 
 /**

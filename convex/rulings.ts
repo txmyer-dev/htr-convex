@@ -16,10 +16,11 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
 import { appendEvent, recordAction } from "./events";
 import { holdNotice, isOverdue } from "./lib/digest/expiry";
+import { EMAIL } from "./lib/mail/inbound";
 import { isEmpty, parseReply, stripQuoted, type Verdict } from "./lib/rulings/parse";
 import { learn } from "./facts";
-import { approve, edit, expire, pendingFor, propose, reject, transition, type Proposal } from "./proposals";
-import { skippableWhenFailed, summarize } from "./lib/proposals/lifecycle";
+import { approve, edit, expire, pendingFor, propose, redraftSource, reject, transition, type Proposal } from "./proposals";
+import { EVENT_LEAD_MS, skippableWhenFailed, summarize } from "./lib/proposals/lifecycle";
 import { requireSurface } from "./surface";
 
 type Tenant = Doc<"tenants">;
@@ -203,7 +204,6 @@ export const ruleFromSurface = mutation({
 
 // ---- editing an event card on the page (KTD10) ---------------------------------------------
 
-const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 const MAX_MINUTES = 24 * 60;
 
 /** The drafter's words, kept by the first page edit that replaced them; undefined if none did. */
@@ -264,6 +264,8 @@ export const editEvent = mutation({
     await ctx.db.patch(p._id, {
       body: words, edited: p.edited || reworded, meta: { ...p.meta, event },
       summary: summarize(p.toName, p.toAddress, words, p.kind, event),
+      // KTD9 follows the edited time: stop waiting two hours before the new start, not the old one.
+      ...(moved ? { deadline: startMs - EVENT_LEAD_MS } : {}),
     });
     if (moved) await ctx.scheduler.runAfter(0, internal.calendar.checkClash, { proposalId: p._id, startMs, endMs });
     await appendEvent(ctx, tenant._id, "event.edited", { proposalId: p._id, moved, reworded });
@@ -325,9 +327,7 @@ export async function expirePass(ctx: MutationCtx, tenant: Tenant, now = Date.no
     if ((await expire(ctx, p._id)) === null) continue;
     await appendEvent(ctx, tenant._id, "proposal.expired", { proposalId: p._id });
     if (p.kind === "event") {
-      if (p.sourceKind === "email" && p.sourceId) {
-        await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
-      }
+      await redraftSource(ctx, p);
       await record(ctx, tenant._id, p._id, p.digestId, "clock", "", "expired");
       expired.push(p._id);
       continue;

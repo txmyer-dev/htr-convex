@@ -223,6 +223,19 @@ describe("editEvent", () => {
     expect(p.summary).toBe("Event: Tue Oct 20, 3:00 PM with Sam");
   });
 
+  test("a new time moves the deadline with it: two hours before the edited start, not the old one", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId); // deadline Tue 09:00
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(22, 14) });
+    expect((await get(t, id)).deadline).toBe(pdt(22, 12));
+    vi.setSystemTime(pdt(20, 10)); // past the old deadline
+    expect(await t.mutation(internal.rulings.expireAll, {})).toBe(0);
+    expect((await get(t, id)).status).toBe("pending");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, title: "Kitchen walkthrough" });
+    expect((await get(t, id)).deadline).toBe(pdt(22, 12)); // a title alone leaves it
+  });
+
   test("a move card edits only its new time and its words", async () => {
     const { t, tenantId } = await setup();
     const { id } = await pendingCard(t, tenantId, moveEvent);

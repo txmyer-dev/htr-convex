@@ -90,6 +90,24 @@ export const grounding = v.object({
   links: v.optional(v.array(v.object({ url: v.string(), title: v.optional(v.string()), fetchedAt: v.number() }))),
 });
 
+/** A span of time, ms since epoch: start inclusive, end exclusive. */
+export const interval = v.object({ start: v.number(), end: v.number() });
+
+/** An event card (proposals.meta.event): what approval writes to the primary calendar. Google notifies every attendee. */
+export const eventMeta = v.object({
+  op: v.union(v.literal("insert"), v.literal("move")),
+  title: v.string(),
+  startMs: v.number(),
+  endMs: v.number(),
+  timeZone: v.string(), // the owner's, when drafted: the card shows times in it
+  attendees: v.array(v.string()), // emails
+  targetEventId: v.optional(v.string()), // a move: the event it moves
+  previousStartMs: v.optional(v.number()), // a move: where that event sits now
+  previousEndMs: v.optional(v.number()),
+  eventId: v.optional(v.string()), // once written
+  clash: v.optional(v.union(v.literal("checking"), v.literal("clear"), v.literal("busy"))), // the web edit's clash check (KTD10)
+});
+
 export default defineSchema({
   tenants: defineTable(tenantFields).index("by_slug", ["slug"]),
 
@@ -226,22 +244,10 @@ export default defineSchema({
         status: v.optional(v.string()), // ClickUp's own status name, as last read
         syncedAt: v.optional(v.number()),
       })),
-      // An event card: what approval writes to the primary calendar. Google notifies every attendee.
-      event: v.optional(v.object({
-        op: v.union(v.literal("insert"), v.literal("move")),
-        title: v.string(),
-        startMs: v.number(),
-        endMs: v.number(),
-        timeZone: v.string(), // the owner's, when drafted: the card shows times in it
-        attendees: v.array(v.string()), // emails
-        targetEventId: v.optional(v.string()), // a move: the event it moves
-        previousStartMs: v.optional(v.number()), // a move: where that event sits now
-        previousEndMs: v.optional(v.number()),
-        eventId: v.optional(v.string()), // once written
-        clash: v.optional(v.union(v.literal("checking"), v.literal("clear"), v.literal("busy"))), // the web edit's clash check (KTD10)
-      })),
+      // An event card: what approval writes to the primary calendar.
+      event: v.optional(eventMeta),
       // A slot offer (an email card): the times it offers, so a later pick can be matched.
-      offer: v.optional(v.object({ slots: v.array(v.object({ start: v.number(), end: v.number() })) })),
+      offer: v.optional(v.object({ slots: v.array(interval) })),
     }),
     createdAt: v.number(),
     ruledAt: v.optional(v.number()),

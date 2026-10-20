@@ -5,7 +5,7 @@
 // here, so text in an email can't add invitees. A move keeps its event's attendees untouched.
 
 import type { CalendarClaw } from "../../adapters/ports";
-import { atLocalHour, localParts } from "../time";
+import { atLocalHour, hhmm, localParts, ymd, zonedToMs } from "../time";
 import { checkTime, findSlots, formatSlot, type Interval } from "./availability";
 import { busyFor } from "./busy";
 
@@ -49,12 +49,9 @@ export const INTENT_SYSTEM =
   '("2pm ET" is America/New_York); otherwise null and the time is in owner_zone. Resolve weekdays and "tomorrow" against now. ' +
   "title is a short meeting name only if they give one. Never return email addresses or attendees.";
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
 /** "2026-10-20T14:00", wall time in `zone`. */
 export function localIso(ms: number, zone: string): string {
-  const p = localParts(ms, zone);
-  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+  return `${ymd(ms, zone)}T${hhmm(ms, zone)}`;
 }
 
 /** The extraction call's user turn. */
@@ -82,12 +79,7 @@ export function localToMs(local: string, zone: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::00)?$/.exec(local);
   if (!m) return null;
   const [y, mo, d, h, mi] = m.slice(1).map(Number);
-  const wall = Date.UTC(y, mo - 1, d, h, mi);
-  const offset = (ms: number) => {
-    const p = localParts(ms, zone);
-    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ms / MIN) * MIN;
-  };
-  const ms = wall - offset(wall - offset(wall));
+  const ms = zonedToMs(y, mo, d, h, mi, zone);
   const back = localParts(ms, zone);
   if (back.year !== y || back.month !== mo || back.day !== d || back.hour !== h || back.minute !== mi) return null;
   return ms;

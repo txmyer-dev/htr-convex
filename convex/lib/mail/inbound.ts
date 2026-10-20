@@ -17,6 +17,9 @@ export type InboundMail = {
   headers?: Record<string, string>;
 };
 
+/** One plain address: no spaces, commas, semicolons or angle brackets, an @, and a dot in the domain. */
+export const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+
 const NAMED = /^"?([^"<]*?)"?\s*<([^<>\s@]+@[^<>\s@]+)>$/;
 
 /** "Sam Lee <sam@x.com>" -> { name: "Sam Lee", address: "sam@x.com" }; a bare address is itself. */

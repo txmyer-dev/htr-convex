@@ -170,6 +170,13 @@ export const finishSend = internalMutation({
   },
 });
 
+/** A closed event card's email is drafted again (KTD9): only an email source has a message to answer. */
+export async function redraftSource(ctx: MutationCtx, p: Proposal) {
+  if (p.sourceKind === "email" && p.sourceId) {
+    await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
+  }
+}
+
 /** The event card's write landed: a retry finds the id and only replies (KTD5). Before the reply, always. */
 export const recordEvent = internalMutation({
   args: { proposalId: v.id("proposals"), eventId: v.string() },
@@ -193,9 +200,7 @@ export const closeNoLongerFree = internalMutation({
     if (!p || p.kind !== "event" || p.status !== "sending") return false;
     await ctx.db.patch(proposalId, { status: "expired", error: reason, ruledAt: Date.now() });
     await appendEvent(ctx, p.tenantId, "event.no_longer_free", { proposalId, reason });
-    if (p.sourceKind === "email" && p.sourceId) {
-      await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
-    }
+    await redraftSource(ctx, p);
     return true;
   },
 });

@@ -39,6 +39,9 @@ export function canMove(from: Status, to: Status): boolean {
 }
 
 /** Which kinds may be skipped once failed: an event card, whose calendar write may already have landed. */
+/** An event card's latest deadline: this long before the meeting starts (KTD9). */
+export const EVENT_LEAD_MS = 2 * 3_600_000;
+
 export function skippableWhenFailed(kind: string): boolean {
   return kind === "event";
 }
