@@ -6,7 +6,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../convex/_generated/api";
 import type { Doc } from "../convex/_generated/dataModel";
-import { llmClaw, mailClaw, notifyClaw, readerClaw, taskClaw } from "../convex/adapters/resolve";
+import { calendarClaw, llmClaw, mailClaw, notifyClaw, readerClaw, taskClaw } from "../convex/adapters/resolve";
 import { changes } from "../convex/health";
 import { TENANTS } from "../convex/install";
 import schema from "../convex/schema";
@@ -31,6 +31,7 @@ describe("resolve", () => {
     expect(notifyClaw(t)).toBeNull();
     expect(readerClaw(t)).toBeNull();
     expect(llmClaw(t)).toBeNull();
+    expect(calendarClaw(t)).toBeNull(); // rides a Gmail grant; this tenant mails through AgentMail
     expect(() => mailClaw(t)).toThrow("AGENTMAIL_API_KEY");
   });
 

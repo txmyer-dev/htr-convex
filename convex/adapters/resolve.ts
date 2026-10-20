@@ -4,10 +4,11 @@
 // env alone. A claw that isn't configured is null; the caller decides whether that is an error.
 
 import type { Doc } from "../_generated/dataModel";
+import { hasCalendar, type GoogleCreds } from "../lib/google/auth";
 import { normalizeBaseUrl } from "../lib/llm/baseUrl";
 import { EMBED_DEFAULT_MODEL } from "../lib/llm/embed";
-import type { LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, Port, ReaderClaw, TaskClaw } from "./ports";
-import { agentMail, clickUp, firecrawl, fireflies, gmail, ntfy, openAiCompat } from "./vendors";
+import type { CalendarClaw, LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, Port, ReaderClaw, TaskClaw } from "./ports";
+import { agentMail, clickUp, firecrawl, fireflies, gmail, googleCalendar, ntfy, openAiCompat } from "./vendors";
 
 type Tenant = Doc<"tenants">;
 type Fetch = typeof fetch;
@@ -19,23 +20,37 @@ export function hasMail(tenant: Tenant): boolean {
   return Boolean(tenant.channels.inboxId) || tenant.adapters?.mail?.kind === "gmail";
 }
 
+/** The install's OAuth client and the owner's refresh token, for a tenant on Gmail. */
+function googleCreds(tenant: Tenant, a: { clientIdEnv?: string; clientSecretEnv?: string }): GoogleCreds {
+  const idEnv = a.clientIdEnv ?? "GOOGLE_OAUTH_CLIENT_ID";
+  const secretEnv = a.clientSecretEnv ?? "GOOGLE_OAUTH_CLIENT_SECRET";
+  const clientId = env(idEnv);
+  const clientSecret = env(secretEnv);
+  if (!clientId || !clientSecret) throw new Error(`${idEnv} and ${secretEnv} must be set on the deployment`);
+  const refreshToken = tenant.channels.gmail?.refreshToken ?? env("GOOGLE_REFRESH_TOKEN");
+  if (!refreshToken) throw new Error(`tenant ${tenant.slug} has not connected Gmail; run gmail:connectUrl and open the link`);
+  return { clientId, clientSecret, refreshToken };
+}
+
 export function mailClaw(tenant: Tenant, f: Fetch = fetch): MailClaw {
   const a = tenant.adapters?.mail;
-  if (a?.kind === "gmail") {
-    const idEnv = a.clientIdEnv ?? "GOOGLE_OAUTH_CLIENT_ID";
-    const secretEnv = a.clientSecretEnv ?? "GOOGLE_OAUTH_CLIENT_SECRET";
-    const clientId = env(idEnv);
-    const clientSecret = env(secretEnv);
-    if (!clientId || !clientSecret) throw new Error(`${idEnv} and ${secretEnv} must be set on the deployment`);
-    const grant = tenant.channels.gmail;
-    const refreshToken = grant?.refreshToken ?? env("GOOGLE_REFRESH_TOKEN");
-    if (!refreshToken) throw new Error(`tenant ${tenant.slug} has not connected Gmail; run gmail:connectUrl and open the link`);
-    return gmail({ clientId, clientSecret, refreshToken }, grant?.address ?? env("GMAIL_ADDRESS"), f);
-  }
+  if (a?.kind === "gmail") return gmail(googleCreds(tenant, a), tenant.channels.gmail?.address ?? env("GMAIL_ADDRESS"), f);
   const key = env(a?.keyEnv ?? "AGENTMAIL_API_KEY");
   if (!key) throw new Error(`${a?.keyEnv ?? "AGENTMAIL_API_KEY"} is not set on the deployment`);
   if (!tenant.channels.inboxId) throw new Error(`tenant ${tenant.slug} has no AgentMail inbox; run mail:provision`);
   return agentMail(key, tenant.channels.inboxId, f);
+}
+
+/**
+ * The owner's Google calendars ride the Gmail grant (KTD3). No Gmail, no calendar: null. Gmail
+ * granted without the calendar scopes (or before they were asked for) throws, so the heartbeat
+ * shows the calendar down with what to do.
+ */
+export function calendarClaw(tenant: Tenant, f: Fetch = fetch): CalendarClaw | null {
+  const a = tenant.adapters?.mail;
+  if (a?.kind !== "gmail") return null;
+  if (!hasCalendar(tenant.channels.gmail?.scope)) throw new Error("calendar not connected — reconnect Google");
+  return googleCalendar(googleCreds(tenant, a), f);
 }
 
 export function taskClaw(tenant: Tenant, f: Fetch = fetch): TaskClaw | null {
@@ -94,5 +109,6 @@ export function clawsOf(tenant: Tenant, f: Fetch = fetch): Array<{ port: Port; c
   tryResolve("reader", () => readerClaw(tenant, f));
   tryResolve("llm", () => llmClaw(tenant, f));
   tryResolve("meetings", () => meetingsClaw(tenant, f));
+  tryResolve("calendar", () => calendarClaw(tenant, f));
   return out;
 }
