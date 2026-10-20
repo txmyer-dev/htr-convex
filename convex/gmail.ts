@@ -4,7 +4,8 @@
 //
 // Consent: the owner opens gmail:connectUrl's link, which carries their surface key. Google sends
 // them back to /oauth/google/callback (register exactly that, no trailing slash, on the OAuth
-// client), and the refresh token is kept on the tenant.
+// client), and the refresh token is kept on the tenant with the scopes granted: mail always,
+// calendar when the owner ticked those boxes too.
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -12,6 +13,7 @@ import type { Doc } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { mailClaw } from "./adapters/resolve";
 import { appendEvent } from "./events";
+import { hasCalendar } from "./lib/google/auth";
 import { consentUrl, exchangeCode } from "./lib/mail/gmail";
 import { rulingToken, tokenEquals } from "./lib/rulings/token";
 import type { ReceiveOutcome } from "./mail";
@@ -147,11 +149,11 @@ export async function finishConsent(tenant: Doc<"tenants">, code: string, f: typ
 }
 
 export const saveGrant = internalMutation({
-  args: { tenantId: v.id("tenants"), address: v.string(), refreshToken: v.string() },
-  handler: async (ctx, { tenantId, address, refreshToken }) => {
+  args: { tenantId: v.id("tenants"), address: v.string(), refreshToken: v.string(), scope: v.optional(v.string()) },
+  handler: async (ctx, { tenantId, address, refreshToken, scope }) => {
     const t = await ctx.db.get(tenantId);
     if (!t) throw new Error("unknown tenant");
-    await ctx.db.patch(tenantId, { channels: { ...t.channels, gmail: { address, refreshToken, grantedAt: Date.now() } } });
-    await appendEvent(ctx, tenantId, "gmail.connected", { address });
+    await ctx.db.patch(tenantId, { channels: { ...t.channels, gmail: { address, refreshToken, grantedAt: Date.now(), scope } } });
+    await appendEvent(ctx, tenantId, "gmail.connected", { address, calendar: hasCalendar(scope) });
   },
 });

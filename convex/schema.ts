@@ -44,7 +44,8 @@ export const tenantFields = {
     webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
     // The owner's Gmail consent (GET /oauth/google/{slug}/start): kept here like the webhook secret,
     // because consent arrives over HTTP and an HTTP route cannot set an env var. GOOGLE_REFRESH_TOKEN is the fallback.
-    gmail: v.optional(v.object({ address: v.string(), refreshToken: v.string(), grantedAt: v.number() })),
+    // scope: what Google granted (space-separated); absent on a grant from before it was kept, which is mail only.
+    gmail: v.optional(v.object({ address: v.string(), refreshToken: v.string(), grantedAt: v.number(), scope: v.optional(v.string()) })),
   }),
   // Where approved tasks go (kind "task" proposals). The token is CLICKUP_API_TOKEN on the deployment.
   // byLane sends a call's items to that entity's list (the line's lane); anything else goes to the default.

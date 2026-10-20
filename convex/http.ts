@@ -19,6 +19,7 @@ import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { finishConsent, readState, startConsent } from "./gmail";
+import { hasCalendar, hasMail } from "./lib/google/auth";
 import { meetingsWebhookSecret } from "./adapters/resolve";
 import { describeGrounding } from "./lib/knowledge/domain";
 import { isReady, parseWebhook, verifySignature } from "./lib/meetings/fireflies";
@@ -127,13 +128,16 @@ http.route({
     } catch (e) {
       return page(`<p>${escapeHtml(String(e instanceof Error ? e.message : e))}</p>`, 502);
     }
-    if (!/gmail\.readonly/.test(got.scope) || !/gmail\.send/.test(got.scope)) {
+    if (!hasMail(got.scope)) {
       return page("<p>Both boxes need ticking: read and send. Open the connect link again and allow both.</p>", 400);
     }
-    await ctx.runMutation(internal.gmail.saveGrant, { tenantId: tenant._id, address: got.address, refreshToken: got.refreshToken });
+    await ctx.runMutation(internal.gmail.saveGrant, { tenantId: tenant._id, address: got.address, refreshToken: got.refreshToken, scope: got.scope });
     const other = got.address !== tenant.owner.email.toLowerCase()
       ? `<p style="color:#8a5a00">Note: this is not the owner address on file (${escapeHtml(tenant.owner.email)}). Rulings by email still come from that one.</p>` : "";
-    return page(`<h1 style="font-size:1.2rem">Gmail connected</h1><p>Hold the Room now reads ${escapeHtml(got.address)} and replies from it, in thread, only when you say so.</p>${other}`);
+    const calendar = hasCalendar(got.scope)
+      ? "<p><b>Calendar connected.</b> Hold the Room reads your calendars and adds or moves events on your primary one only when you say so.</p>"
+      : `<p style="color:#8a5a00"><b>Calendar not connected.</b> Mail works without it. To add it, open the connect link again and tick the calendar boxes.</p>`;
+    return page(`<h1 style="font-size:1.2rem">Google connected</h1><p><b>Gmail connected.</b> Hold the Room now reads ${escapeHtml(got.address)} and replies from it, in thread, only when you say so.</p>${calendar}${other}`);
   }),
 });
 
