@@ -5,11 +5,11 @@
 
 import type { CalendarClaw } from "../../adapters/ports";
 import type { Busy, Interval } from "./availability";
-import type { FreeBusy } from "./google";
+import { isGoogleGenerated, type FreeBusy } from "./google";
 
 export async function busyFor(claw: CalendarClaw, window: Interval, excludeEventId?: string): Promise<Busy> {
   try {
-    const others = (await claw.calendars()).filter((c) => !c.primary).map((c) => c.id);
+    const others = (await claw.calendars()).filter((c) => !c.primary && !isGoogleGenerated(c.id)).map((c) => c.id);
     const [fb, primary] = await Promise.all([
       others.length ? claw.freeBusy(window, others) : Promise.resolve<FreeBusy>({ busy: {}, errors: {} }),
       claw.primaryBusy(window, excludeEventId),

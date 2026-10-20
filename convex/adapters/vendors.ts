@@ -1,7 +1,7 @@
 // One adapter per vendor, each a thin wrap of its wire in lib/*. Nothing here reads the
 // environment or the tenant: ./resolve.ts hands each one its credentials.
 
-import { GoogleCalendar } from "../lib/calendar/google";
+import { GoogleCalendar, isGoogleGenerated } from "../lib/calendar/google";
 import type { GoogleCreds } from "../lib/google/auth";
 import { AgentMail } from "../lib/mail/agentmail";
 import { getMeeting, whoAmI } from "../lib/meetings/fireflies";
@@ -68,7 +68,7 @@ export function googleCalendar(creds: GoogleCreds, f: Fetch = fetch): CalendarCl
     insert: (ev, id) => c.insert(ev, id),
     move: (id, start, end, tz) => c.move(id, start, end, tz),
     probe: async () => {
-      const cals = await c.calendars();
+      const cals = (await c.calendars()).filter((x) => !isGoogleGenerated(x.id));
       const now = Date.now();
       const { errors } = await c.freeBusy({ start: now, end: now + 3_600_000 }, cals.map((x) => x.id));
       const bad = cals.filter((x) => errors[x.id]).map((x) => `${x.summary} (${errors[x.id]})`);
