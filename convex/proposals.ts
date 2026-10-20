@@ -47,7 +47,7 @@ export type ProposeArgs = {
   sourceKind?: string;
   sourceId?: string;
   deadline?: number;
-  kind?: "email" | "sms" | "site" | "task";
+  kind?: "email" | "sms" | "site" | "task" | "event";
   meta?: Proposal["meta"];
   grounding?: Proposal["grounding"];
   gap?: string;
@@ -67,7 +67,7 @@ export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposa
     toName: a.toName,
     body: a.body,
     basis: a.basis ?? [],
-    summary: summarize(a.toName, a.toAddress, a.body, a.kind ?? "email"),
+    summary: summarize(a.toName, a.toAddress, a.body, a.kind ?? "email", a.meta?.event),
     status: "pending",
     sourceKind: a.sourceKind,
     sourceId: a.sourceId,
@@ -115,7 +115,7 @@ export const retry = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, 
 export async function edit(ctx: MutationCtx, id: Id<"proposals">, body: string): Promise<Proposal | null> {
   const p = await ctx.db.get(id);
   if (!p || p.status !== "pending") return null;
-  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body, p.kind) });
+  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body, p.kind, p.meta.event) });
   return (await ctx.db.get(id))!;
 }
 
@@ -146,6 +146,7 @@ export const finishSend = internalMutation({
       await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
       return; // a task went to the task list, not to a person: no message row
     }
+    // An event card falls through: its reply is a message in their thread, like any email.
     // A new thread (a site request) is remembered so the web agent's reply in it finds its proposal.
     if (threadId && !p.meta.threadId) await ctx.db.patch(proposalId, { meta: { ...p.meta, threadId } });
     await ctx.db.insert("messages", {
@@ -186,6 +187,7 @@ export const list = query({
       basis: p.basis, summary: p.summary, deadline: p.deadline, digestNo: p.digestNo, edited: p.edited,
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, subject: p.meta.subject,
       sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null, siteFailure: p.meta.siteFailure ?? null,
+      event: p.meta.event ?? null, // an event card: what approval writes, and for a move where it sits now
     }));
   },
 });

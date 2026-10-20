@@ -156,8 +156,9 @@ export default defineSchema({
 
   proposals: defineTable({
     tenantId: v.id("tenants"),
-    // site: a request to the web agent, see facts.ts. task: a to-do for the owner's task list, see tasks.ts
-    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site"), v.literal("task")),
+    // site: a request to the web agent, see facts.ts. task: a to-do for the owner's task list, see tasks.ts.
+    // event: a calendar write and its reply in thread, ruled together (body is the reply)
+    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site"), v.literal("task"), v.literal("event")),
     toAddress: v.string(),
     toName: v.optional(v.string()),
     body: v.string(),
@@ -198,6 +199,21 @@ export default defineSchema({
         status: v.optional(v.string()), // ClickUp's own status name, as last read
         syncedAt: v.optional(v.number()),
       })),
+      // An event card: what approval writes to the primary calendar. Google notifies every attendee.
+      event: v.optional(v.object({
+        op: v.union(v.literal("insert"), v.literal("move")),
+        title: v.string(),
+        startMs: v.number(),
+        endMs: v.number(),
+        timeZone: v.string(), // the owner's, when drafted: the card shows times in it
+        attendees: v.array(v.string()), // emails
+        targetEventId: v.optional(v.string()), // a move: the event it moves
+        previousStartMs: v.optional(v.number()), // a move: where that event sits now
+        previousEndMs: v.optional(v.number()),
+        eventId: v.optional(v.string()), // once written
+      })),
+      // A slot offer (an email card): the times it offers, so a later pick can be matched.
+      offer: v.optional(v.object({ slots: v.array(v.object({ start: v.number(), end: v.number() })) })),
     }),
     createdAt: v.number(),
     ruledAt: v.optional(v.number()),

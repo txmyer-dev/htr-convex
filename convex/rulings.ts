@@ -18,7 +18,8 @@ import { appendEvent, recordAction } from "./events";
 import { holdNotice, isOverdue } from "./lib/digest/expiry";
 import { isEmpty, parseReply, stripQuoted, type Verdict } from "./lib/rulings/parse";
 import { learn } from "./facts";
-import { approve, edit, expire, pendingFor, propose, reject, type Proposal } from "./proposals";
+import { approve, edit, expire, pendingFor, propose, reject, transition, type Proposal } from "./proposals";
+import { skippableWhenFailed } from "./lib/proposals/lifecycle";
 import { requireSurface } from "./surface";
 
 type Tenant = Doc<"tenants">;
@@ -193,6 +194,23 @@ export const ruleFromSurface = mutation({
     const ruling: Verdict = verdict === "edit" ? { kind: "edit", body: (body ?? "").trim() } : { kind: verdict };
     if (ruling.kind === "edit" && !ruling.body) return "Nothing to send: the words were empty.";
     return await ruleById(ctx, tenant, proposalId, ruling, "surface");
+  },
+});
+
+/**
+ * Skip a failed event card from the surface: its calendar write may have landed while the reply
+ * did not, and the owner can let it rest there. Other failed kinds keep only Retry.
+ */
+export const skipFailed = mutation({
+  args: { slug: v.string(), key: v.string(), proposalId: v.id("proposals") },
+  handler: async (ctx, { slug, key, proposalId }): Promise<string> => {
+    const tenant = await requireSurface(ctx, slug, key);
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.tenantId !== tenant._id || p.status !== "failed") return "Nothing failed under that card.";
+    if (!skippableWhenFailed(p.kind)) return "Only a failed calendar card can be skipped.";
+    if ((await transition(ctx, p._id, "rejected", { ruledAt: Date.now() })) === null) return "Already ruled.";
+    await record(ctx, tenant._id, p._id, p.digestId, "surface", "surface:reject", "reject");
+    return "Skipped. Nothing more goes out for it.";
   },
 });
 

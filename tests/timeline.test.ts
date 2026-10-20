@@ -83,4 +83,15 @@ describe("a request's timeline", () => {
     expect(describeEvent("site.brand_new", {}, true)).toEqual({ text: "site.brand_new", tone: "ok" });
     expect(describeEvent("site.acknowledged", { verdict: "live", text: "x".repeat(300) }, true)!.text).toMatch(/^The agent replied: “x{139}…”$/); // the first line, cut at 140
   });
+
+  test("an event card: written to the calendar, invite or update sent, replied in thread", () => {
+    const sent = [ev("proposal.created", { source: "email" }), ev("proposal.sent", { kind: "event" })];
+    expect(texts(buildTimeline({ kind: "event", status: "sent", meta: { event: { op: "insert" } } }, sent, []))).toEqual([
+      "Drafted from their message",
+      "Added to your calendar, invite sent, replied in thread",
+    ]);
+    expect(texts(buildTimeline({ kind: "event", status: "sent", meta: { event: { op: "move" } } }, sent, [])).at(-1)).toBe(
+      "Moved on your calendar, update sent, replied in thread",
+    );
+  });
 });

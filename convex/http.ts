@@ -26,6 +26,7 @@ import { isReady, parseWebhook, verifySignature } from "./lib/meetings/fireflies
 import { parseAgentMailEvent } from "./lib/mail/inbound";
 import { svixVerify } from "./lib/mail/svix";
 import { ntfyConfig } from "./lib/notify/ntfy";
+import { eventWhen, eventWho, signLabel } from "./lib/proposals/lifecycle";
 import { rulingLinks, tokenEquals, verifyRulingToken } from "./lib/rulings/token";
 import { liveSurfaceUrl, rulingSecret, siteUrl, surfaceKey } from "./surface";
 import { agendaFor, intakeKey } from "./tasks";
@@ -304,10 +305,13 @@ http.route({
           `<div style="font-weight:600">${p.digestNo ? `${p.digestNo} · ` : ""}${escapeHtml(p.toName || p.toAddress)}</div>` +
           (p.subject ? `<div style="color:#5b6070">${escapeHtml(p.subject)}</div>` : "") +
           (p.basis[0] ? `<p style="color:#5b6070;margin:8px 0">“${escapeHtml(p.basis[0])}”</p>` : "") +
+          (p.kind === "event" && p.event
+            ? `<p><b>${escapeHtml(p.event.title)}</b><br>${escapeHtml(eventWhen(p.event))}<br>${escapeHtml(eventWho(p.event))}</p>`
+            : "") +
           `<p style="white-space:pre-wrap">${escapeHtml(p.body)}</p>` +
           (describeGrounding(p.grounding) ? `<p style="color:#5b6070;font-size:.9em">${escapeHtml(describeGrounding(p.grounding)!)}</p>` : "") +
           (p.gap ? `<p style="color:#8a5a00;font-size:.9em">You haven't told me: ${escapeHtml(p.gap)}. Edit with your answer and I'll remember it.</p>` : "") +
-          `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">${p.kind === "task" ? "Add task" : "Send"}</a>` +
+          `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">${signLabel(p.kind, p.event)}</a>` +
           `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
           `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a></div>`,
       );

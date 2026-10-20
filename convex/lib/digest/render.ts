@@ -12,6 +12,7 @@
 // screen. Past the cap the tail is counted, not dropped silently. The same text is the plain
 // part of the digest email; the ruling page renders the same items as a list.
 
+import { eventWhen, eventWho, type CardEvent } from "../proposals/lifecycle";
 import { localDaysBetween, localParts, sameLocalDay } from "../time";
 
 export const HELP_LINE = 'Reply with the number and ✅, no, or better words. "all" sends everything.';
@@ -23,11 +24,12 @@ export type DigestItem = {
   toName?: string | null;
   body: string;
   basis: string[];
-  kind: string; // email | sms
+  kind: string; // email | sms | site | task | event
   sourceKind?: string | null; // call_message | email | sms | relist
   deadline?: number | null; // ms UTC
   gap?: string | null; // what they asked that the room could not answer
   priority?: "high" | "normal" | "low" | null; // lib/reader/priority.ts; high is marked and leads
+  event?: CardEvent | null; // an event card: the time and who Google notifies lead its line
 };
 
 export const GAP_LINE = "Where it says \"you haven't told me\", reply with the number and the answer; it goes out as your words and I remember it.";
@@ -44,7 +46,7 @@ export function who(p: DigestItem): string {
 export function channelOf(p: DigestItem): string {
   if ((p.sourceKind ?? "").startsWith("call")) return "call";
   if (p.kind === "site") return "site";
-  return p.kind === "email" ? "email" : "sms";
+  return p.kind === "email" || p.kind === "event" ? "email" : "sms";
 }
 
 export function when(p: DigestItem, timeZone: string, nowMs: number): string {
@@ -60,7 +62,8 @@ export function renderLine(n: number, p: DigestItem, timeZone: string, nowMs: nu
   const ask = p.basis.length ? oneLine(p.basis[0], 80) : "";
   const askPart = ask ? ` "${ask}"` : "";
   const gap = p.gap ? ` · you haven't told me: ${oneLine(p.gap, 60)}` : "";
-  return `${n} ${p.priority === "high" ? "‼ " : ""}${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${oneLine(p.body, 160)}${gap}`;
+  const ev = p.kind === "event" && p.event ? `${p.event.op === "move" ? "Move" : "Event"} ${eventWhen(p.event)}, ${eventWho(p.event)} · ` : "";
+  return `${n} ${p.priority === "high" ? "‼ " : ""}${who(p)} (${channelOf(p)}${when(p, timeZone, nowMs)}):${askPart} → ${ev}${oneLine(p.body, 160)}${gap}`;
 }
 
 /** items: (digest number, proposal), already numbered by the caller. */

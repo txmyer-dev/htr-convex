@@ -8,6 +8,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { describeGrounding } from "../convex/lib/knowledge/domain";
+import { eventWhen, eventWho, signLabel } from "../convex/lib/proposals/lifecycle";
 
 type Row = NonNullable<ReturnType<typeof useQuery<typeof api.proposals.list>>>[number];
 
@@ -110,7 +111,16 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
   const tenant = useQuery(api.tenants.surface, { slug, key: keyToken });
   const rows = useQuery(api.proposals.list, { slug, key: keyToken, limit: 100 });
   const retrySite = useMutation(api.facts.retrySite);
+  const retrySend = useAction(api.mail.retrySend);
+  const skipFailed = useMutation(api.rulings.skipFailed);
   const [note, setNote] = useState<string | null>(null);
+  const tryNote = async (run: () => Promise<string>) => {
+    try {
+      setNote(await run());
+    } catch (err) {
+      setNote(String(err instanceof Error ? err.message : err));
+    }
+  };
   if (tenant === undefined || rows === undefined) return <main className="shell"><p className="muted">Loading…</p></main>;
   const pending = rows.filter((r) => r.status === "pending");
   const ruled = rows.filter((r) => r.status !== "pending");
@@ -148,6 +158,13 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
                   <button className="small" onClick={async () => setNote(await retrySite({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>
                     {p.siteFailure === "unseen" ? "Read the site again" : "Ask again"}
                   </button>
+                )}
+                {/* A failed event card: Retry signs it again; Skip lets it rest (the write may have landed, the reply did not). */}
+                {p.kind === "event" && p.status === "failed" && (
+                  <>
+                    <button className="small" onClick={() => tryNote(async () => (await retrySend({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> })) === "sent" ? "Sent." : "Nothing to do.")}>Retry</button>
+                    <button className="small" onClick={() => tryNote(() => skipFailed({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>Skip</button>
+                  </>
                 )}
               </Ruled>
             ))}
@@ -277,10 +294,17 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
       <div className="who">
         {p.digestNo ? <span className="n">{p.digestNo}</span> : null}
         <strong>{p.toName || p.toAddress}</strong>
-        <span className="muted"> · {p.sourceKind === "relist" ? "re-listed" : p.kind === "site" ? "website update" : p.kind}{when ? ` · by ${when}` : ""}</span>
+        <span className="muted"> · {p.sourceKind === "relist" ? "re-listed" : p.kind === "site" ? "website update" : p.kind === "event" ? "calendar" : p.kind}{when ? ` · by ${when}` : ""}</span>
       </div>
       {p.subject && <div className="muted">{p.subject}</div>}
       {p.basis[0] && <blockquote>“{p.basis[0]}”</blockquote>}
+      {p.kind === "event" && p.event && (
+        <div className="event">
+          <strong>{p.event.title}</strong>
+          <div>{eventWhen(p.event)}</div>
+          <div className="muted">{eventWho(p.event)}</div>
+        </div>
+      )}
       {editing ? (
         <textarea value={words} onChange={(e) => setWords(e.target.value)} rows={6} />
       ) : (
@@ -296,7 +320,7 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
           </>
         ) : (
           <>
-            <button className="primary" disabled={busy} onClick={() => act("sign")}>{p.kind === "task" ? "Add task" : "Send"}</button>
+            <button className="primary" disabled={busy} onClick={() => act("sign")}>{signLabel(p.kind, p.event)}</button>
             <button disabled={busy} onClick={() => act("reject")}>Skip</button>
             <button disabled={busy} onClick={() => setEditing(true)}>Edit</button>
           </>

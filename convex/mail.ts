@@ -244,10 +244,34 @@ export const dispatch = internalAction({
       return "sent";
     } catch (e) {
       await ctx.runMutation(internal.proposals.finishSend, { proposalId, error: String(e) });
+      // An owner who approved an event card from the phone has no other way to learn nothing went out.
+      if (p.kind === "event") await pushEventFailure(tenant, p, String(e));
       throw e;
     }
   },
 });
+
+async function pushEventFailure(tenant: Doc<"tenants">, p: Doc<"proposals">, error: string) {
+  const notify = notifyClaw(tenant);
+  if (!notify) return;
+  try {
+    await notify.push(eventFailedNotice(p, error, await liveSurfaceUrl(tenant.slug)));
+  } catch (e) {
+    console.error(`ntfy push failed for failed event card ${p._id}: ${e}`); // the card shows the failure regardless
+  }
+}
+
+/** A failed event card on the phone: its reason, and the page where Retry and Skip are. */
+export function eventFailedNotice(p: Doc<"proposals">, error: string, surface: string): Notice {
+  return {
+    title: `Not sent: ${p.meta.event?.title ?? p.toName ?? p.toAddress}`.slice(0, 200),
+    message: `${error.replace(/^Error:\s*/, "").slice(0, 600)}\n\nRetry or skip it on the page.`,
+    tags: ["warning"],
+    priority: 4,
+    click: surface,
+    actions: [{ action: "view", label: "Open", url: surface }],
+  };
+}
 
 type Dispatched = Sent & { task?: { url: string; status: string } };
 
@@ -265,6 +289,9 @@ const DISPATCH: Record<Doc<"proposals">["kind"], (tenant: Doc<"tenants">, p: Doc
   },
   sms: async () => {
     throw new Error("no messaging claw can text yet; sms proposals cannot be sent");
+  },
+  event: async () => {
+    throw new Error("event dispatch not built yet");
   },
 };
 

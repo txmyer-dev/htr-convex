@@ -26,7 +26,8 @@ function firstLine(text: string | undefined, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-export function describeEvent(kind: string, payload: unknown, site: boolean): Omit<Step, "at"> | null {
+/** `event`: the card's calendar operation, for an event card. */
+export function describeEvent(kind: string, payload: unknown, site: boolean, event?: string): Omit<Step, "at"> | null {
   const p = (payload && typeof payload === "object" ? payload : {}) as P;
   switch (kind) {
     case "proposal.created":
@@ -35,6 +36,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean): Om
       return { text: "Drafted from their message", tone: "ok" };
     case "proposal.sent":
       if (site) return { text: "Sent to your website's agent, signed, with you copied", tone: "ok" };
+      if (event === "move") return { text: "Moved on your calendar, update sent, replied in thread", tone: "ok" };
+      if (event) return { text: "Added to your calendar, invite sent, replied in thread", tone: "ok" };
       return { text: p.edited ? "Sent in their thread, in your words" : "Sent in their thread", tone: "ok" };
     case "proposal.send_failed":
       // The row above already shows the whole error; the story needs only its start.
@@ -94,13 +97,14 @@ function pending(status: string, site: boolean, last: TimelineEvent | undefined)
 }
 
 export function buildTimeline(
-  proposal: { kind: string; status: string },
+  proposal: { kind: string; status: string; meta?: { event?: { op: string } } },
   events: TimelineEvent[],
   rulings: TimelineRuling[],
 ): Step[] {
   const site = proposal.kind === "site";
+  const op = proposal.kind === "event" ? (proposal.meta?.event?.op ?? "insert") : undefined;
   const rows = [
-    ...events.map((e) => ({ at: e.at, seq: e._creationTime, step: describeEvent(e.kind, e.payload, site) })),
+    ...events.map((e) => ({ at: e.at, seq: e._creationTime, step: describeEvent(e.kind, e.payload, site, op) })),
     ...rulings.map((r) => ({ at: r.at, seq: r._creationTime, step: describeRuling(r) })),
   ];
   const steps: Step[] = rows
