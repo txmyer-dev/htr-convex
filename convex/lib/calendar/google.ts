@@ -76,6 +76,14 @@ function toEvent(e: RawEvent, calendarId: string, zone: string): CalendarEvent {
 
 const wireTime = (ms: number, timeZone: string) => ({ dateTime: new Date(ms).toISOString(), timeZone });
 
+/**
+ * Google's own generated calendars (holidays, contacts' birthdays) hold none of the owner's time,
+ * and free/busy answers notFound for them, so they stay out of availability.
+ */
+export function isGoogleGenerated(calendarId: string): boolean {
+  return calendarId.endsWith("@group.v.calendar.google.com");
+}
+
 export class GoogleCalendar {
   constructor(
     private readonly creds: GoogleCreds,
