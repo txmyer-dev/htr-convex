@@ -128,13 +128,13 @@ describe("an event card through the funnel", () => {
       return new Response("{}", { status: 200 });
     }));
     const id = await card(t, tenant._id);
-    await expect(t.action(internal.mail.dispatch, { proposalId: id })).rejects.toThrow(/event dispatch not built yet/);
+    await expect(t.action(internal.mail.dispatch, { proposalId: id })).rejects.toThrow(/calendar not connected/);
     const p = (await t.run(async (ctx) => ctx.db.get(id)))!;
     expect(p.status).toBe("failed");
-    expect(p.error).toMatch(/event dispatch not built yet/);
+    expect(p.error).toMatch(/calendar not connected/);
     expect(pushes).toHaveLength(1);
     expect(pushes[0].title).toBe("Not sent: Intro call");
-    expect(String(pushes[0].message)).toContain("event dispatch not built yet");
+    expect(String(pushes[0].message)).toContain("calendar not connected");
     expect(pushes[0].click).toBe(`https://test.convex.site/?t=${tenant.slug}&k=${await surfaceKey(tenant.slug)}`);
   });
 

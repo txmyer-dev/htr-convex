@@ -25,7 +25,7 @@ export type Status = (typeof STATUSES)[number];
 export const TRANSITIONS: Record<Status, readonly Status[]> = {
   pending: ["signed", "rejected", "expired", "superseded"],
   signed: ["sending"],
-  sending: ["sent", "failed"],
+  sending: ["sent", "failed", "expired"], // expired: an event card whose time was taken (callers guard the kind)
   failed: ["signed", "sent", "rejected"], // signed: send again. sent: a site request only, to read the site again without asking the web agent again (facts.retrySite guards the kind). rejected: an event card only (rulings.skipFailed guards the kind, via skippableWhenFailed).
   sent: ["live", "signed", "failed"], // a site request only: live when the page says it; signed again to ask the web agent again; failed when the agent says it could not, or the site never showed it. A sent email stays sent (proposals.resend and facts.ts guard the kind).
   live: [],

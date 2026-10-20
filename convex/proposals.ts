@@ -29,12 +29,17 @@ export async function withStatus(ctx: QueryCtx, tenantId: Id<"tenants">, ...stat
 
 export const pendingFor = (ctx: QueryCtx, tenantId: Id<"tenants">) => withStatus(ctx, tenantId, "pending");
 
+/** The newest proposal for a source: an event card that closed unwritten is followed by its redraft (KTD9). */
 export async function bySource(ctx: QueryCtx, tenantId: Id<"tenants">, sourceKind: string, sourceId: string) {
   return await ctx.db
     .query("proposals")
     .withIndex("by_tenant_source", (q) => q.eq("tenantId", tenantId).eq("sourceKind", sourceKind).eq("sourceId", sourceId))
-    .unique();
+    .order("desc")
+    .first();
 }
+
+/** An expired event card wrote nothing and sent nothing; its source gets drafted again (KTD9). */
+export const redraftable = (p: Proposal) => p.kind === "event" && p.status === "expired";
 
 // ---- writes -------------------------------------------------------------------------
 
@@ -54,11 +59,11 @@ export type ProposeArgs = {
   priority?: Proposal["priority"];
 };
 
-/** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId). */
+/** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId), past an expired event card. */
 export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposal> {
   if (a.sourceKind && a.sourceId) {
     const existing = await bySource(ctx, a.tenantId, a.sourceKind, a.sourceId);
-    if (existing) return existing;
+    if (existing && !redraftable(existing)) return existing;
   }
   const id = await ctx.db.insert("proposals", {
     tenantId: a.tenantId,
@@ -162,6 +167,36 @@ export const finishSend = internalMutation({
       meta: { subject: p.meta.subject },
     });
     await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
+  },
+});
+
+/** The event card's write landed: a retry finds the id and only replies (KTD5). Before the reply, always. */
+export const recordEvent = internalMutation({
+  args: { proposalId: v.id("proposals"), eventId: v.string() },
+  handler: async (ctx, { proposalId, eventId }) => {
+    const p = await ctx.db.get(proposalId);
+    if (!p?.meta.event || p.status !== "sending") return;
+    await ctx.db.patch(proposalId, { meta: { ...p.meta, event: { ...p.meta.event, eventId } } });
+    await appendEvent(ctx, p.tenantId, "event.written", { proposalId, eventId, op: p.meta.event.op });
+  },
+});
+
+/**
+ * The card's time stopped being clean before it was written (R16): it closes as expired, not
+ * failed, with the reason, and its email is drafted again, which now offers free slots. Event
+ * cards only, and only mid-send: the lifecycle's sending -> expired is this path alone.
+ */
+export const closeNoLongerFree = internalMutation({
+  args: { proposalId: v.id("proposals"), reason: v.string() },
+  handler: async (ctx, { proposalId, reason }): Promise<boolean> => {
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.kind !== "event" || p.status !== "sending") return false;
+    await ctx.db.patch(proposalId, { status: "expired", error: reason, ruledAt: Date.now() });
+    await appendEvent(ctx, p.tenantId, "event.no_longer_free", { proposalId, reason });
+    if (p.sourceKind === "email" && p.sourceId) {
+      await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
+    }
+    return true;
   },
 });
 
