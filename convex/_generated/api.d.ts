@@ -11,6 +11,7 @@
 import type * as adapters_ports from "../adapters/ports.js";
 import type * as adapters_resolve from "../adapters/resolve.js";
 import type * as adapters_vendors from "../adapters/vendors.js";
+import type * as calendar from "../calendar.js";
 import type * as crons from "../crons.js";
 import type * as demo from "../demo.js";
 import type * as digest from "../digest.js";
@@ -71,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   "adapters/ports": typeof adapters_ports;
   "adapters/resolve": typeof adapters_resolve;
   "adapters/vendors": typeof adapters_vendors;
+  calendar: typeof calendar;
   crons: typeof crons;
   demo: typeof demo;
   digest: typeof digest;

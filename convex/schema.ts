@@ -123,6 +123,33 @@ export default defineSchema({
     .index("by_tenant_meeting", ["tenantId", "meetingId"])
     .index("by_tenant_digest", ["tenantId", "digestId"]),
 
+  // The owner's calendars, local today through the next 7 days (calendar.ts). A snapshot, not a
+  // record: each refresh replaces the tenant's rows whole. The desk's Today zone and move matching read it.
+  calendarEvents: defineTable({
+    tenantId: v.id("tenants"),
+    eventId: v.string(),
+    calendarId: v.string(),
+    calendar: v.string(), // the calendar's name as the owner sees it
+    title: v.string(),
+    allDay: v.boolean(),
+    startMs: v.number(),
+    endMs: v.number(),
+    status: v.string(), // confirmed | tentative | cancelled
+    attendees: v.array(v.string()), // lowercased
+    organizerSelf: v.boolean(),
+    responseStatus: v.optional(v.string()), // the owner's own answer, when invited
+  }).index("by_tenant_start", ["tenantId", "startMs"]),
+
+  // How fresh each tenant's snapshot is: the window last stored, when, and the last refresh that failed (cleared on success).
+  calendarSnapshots: defineTable({
+    tenantId: v.id("tenants"),
+    windowStart: v.optional(v.number()),
+    windowEnd: v.optional(v.number()),
+    refreshedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  }).index("by_tenant", ["tenantId"]),
+
   // Which data migrations this deployment has run (migrations.ts).
   migrations: defineTable({ name: v.string(), at: v.number() }).index("by_name", ["name"]),
 
