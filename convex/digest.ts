@@ -14,6 +14,7 @@ import { plainOverview, renderDigest, renderMeeting, renderMeetings, type Digest
 import { describeGrounding } from "./lib/knowledge/domain";
 import { hasMail, notifyClaw } from "./adapters/resolve";
 import { noticeFor } from "./lib/notify/ntfy";
+import { eventWhen, eventWho, signLabel } from "./lib/proposals/lifecycle";
 import type { Notice } from "./adapters/ports";
 import { rulingLinks } from "./lib/rulings/token";
 import { unreported } from "./meetings";
@@ -46,8 +47,9 @@ export const build = internalMutation({
     if (!tenant) throw new Error("unknown tenant");
     if (weekly) {
       // Last call was last week: what is still waiting now is dropped, quietly (no notice goes out).
+      // Not an event card: its deadline before the meeting is its only expiry, and it redrafts (KTD9).
       for (const p of await pendingFor(ctx, tenantId)) {
-        if (p.lastCallAt === undefined) continue;
+        if (p.lastCallAt === undefined || p.kind === "event") continue;
         if ((await expire(ctx, p._id)) !== null) await appendEvent(ctx, tenantId, "proposal.last_call_passed", { proposalId: p._id });
       }
     }
@@ -77,7 +79,7 @@ export const build = internalMutation({
       items: numbered.map(([n, p]) => ({
         n,
         proposalId: p._id,
-        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap, priority: p.priority },
+        item: { toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis, kind: p.kind, sourceKind: p.sourceKind, deadline: p.deadline, gap: p.gap, priority: p.priority, event: p.meta.event },
         grounding: p.grounding,
         pushed: p.pushedAt !== undefined,
       })),
@@ -105,13 +107,18 @@ export async function digestEmail(tenant: Doc<"tenants">, built: BuiltDigest, we
     linkLines.push(`${n}  Send: ${links.sign}\n    Skip: ${links.reject}\n    Edit: ${links.edit}`);
     const ask = item.basis[0] ? `<p style="color:#5b6070;margin:0 0 8px">“${escapeHtml(item.basis[0])}”</p>` : "";
     const from = describeGrounding(grounding);
+    // An event card: what, when, how long, and everyone Google notifies, above the reply that goes with it.
+    const ev = item.kind === "event" && item.event
+      ? `<p style="margin:0 0 8px"><b>${escapeHtml(item.event.title)}</b><br>${escapeHtml(eventWhen(item.event))}<br>${escapeHtml(eventWho(item.event))}</p>`
+      : "";
+    const sign = item.kind === "event" ? signLabel(item.kind, item.event) : "Send";
     cards.push(
       `<div style="border:1px solid #d9d8d1;border-radius:8px;padding:14px 16px;margin:12px 0">` +
-        `<div style="font-weight:600;margin-bottom:6px">${n} · ${escapeHtml(item.toName || item.toAddress)}</div>${ask}` +
+        `<div style="font-weight:600;margin-bottom:6px">${n} · ${escapeHtml(item.toName || item.toAddress)}</div>${ask}${ev}` +
         `<p style="white-space:pre-wrap;margin:0 0 12px">${escapeHtml(item.body)}</p>` +
         (from ? `<p style="color:#5b6070;font-size:.9em;margin:0 0 12px">${escapeHtml(from)}</p>` : "") +
         (item.gap ? `<p style="color:#8a5a00;font-size:.9em;margin:0 0 12px">You haven't told me: ${escapeHtml(item.gap)}. Reply <b>${n} your answer</b> and I'll send it and remember it.</p>` : "") +
-        `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">Send</a>` +
+        `<a href="${links.sign}" style="background:#1d222c;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;margin-right:8px">${sign}</a>` +
         `<a href="${links.reject}" style="color:#1d222c;padding:8px 14px;border:1px solid #1d222c;border-radius:6px;text-decoration:none;margin-right:8px">Skip</a>` +
         `<a href="${links.edit}" style="color:#1d222c;padding:8px 14px;border:1px solid #d9d8d1;border-radius:6px;text-decoration:none">Edit</a>` +
         `</div>`,

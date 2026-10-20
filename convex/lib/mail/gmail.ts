@@ -1,13 +1,12 @@
 // Gmail over REST with an OAuth refresh token (Python HTR's adapters/mail_gmail.py + gmail_auth.py).
 // No Google SDK: a handful of endpoints do not justify one, and Web APIs alone keep it in the
-// default Convex runtime. Scopes: gmail.readonly (intake) and gmail.send (dispatch as the owner),
-// nothing wider. Each install brings its own Google Cloud OAuth client (Web application, testing mode).
+// default Convex runtime. Mail uses gmail.readonly (intake) and gmail.send (dispatch as the owner);
+// the one consent also asks for calendar (lib/google/auth.ts). Each install brings its own Google
+// Cloud OAuth client (Web application, testing mode).
 
+import { accessToken, AUTH_URL, GOOGLE_SCOPES, TOKEN_URL, type GoogleCreds } from "../google/auth";
 import { parseAddress, type InboundMail } from "./inbound";
 
-export const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
-export const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-export const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 // Gmail's own categorisation is the strongest signal: only Primary (or uncategorised) mail is a
@@ -15,7 +14,7 @@ const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 export const PULL_QUERY = "in:inbox -from:me -category:promotions -category:social -category:updates -category:forums";
 const MAX_IDS = 200; // per pull; anything older waits for the next one (the cursor only moves on success)
 
-export type GmailCreds = { clientId: string; clientSecret: string; refreshToken: string };
+export type GmailCreds = GoogleCreds;
 type Fetch = typeof fetch;
 
 type Header = { name: string; value: string };
@@ -142,7 +141,7 @@ const reSubject = (s: string) => (/^re:/i.test(s) ? s : `Re: ${s || "your messag
 /** Where the owner consents. `redirectUri` must be byte for byte what the OAuth client registered. */
 export function consentUrl(clientId: string, redirectUri: string, state: string): string {
   const q = new URLSearchParams({
-    client_id: clientId, redirect_uri: redirectUri, response_type: "code", scope: GMAIL_SCOPES,
+    client_id: clientId, redirect_uri: redirectUri, response_type: "code", scope: GOOGLE_SCOPES,
     access_type: "offline", prompt: "consent", include_granted_scopes: "false", state,
   });
   return `${AUTH_URL}?${q}`;
@@ -169,9 +168,6 @@ export async function exchangeCode(
 
 // ---- the client ----------------------------------------------------------------------------------
 
-// Access tokens live an hour; an isolate that stays warm reuses one instead of refreshing per call.
-const tokens = new Map<string, { token: string; exp: number }>();
-
 export class Gmail {
   constructor(
     private readonly creds: GmailCreds,
@@ -179,28 +175,10 @@ export class Gmail {
     private readonly fetchImpl: Fetch = fetch,
   ) {}
 
-  private async accessToken(): Promise<string> {
-    const hit = tokens.get(this.creds.refreshToken);
-    if (hit && Date.now() < hit.exp - 60_000) return hit.token;
-    const res = await this.fetchImpl(TOKEN_URL, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: this.creds.clientId, client_secret: this.creds.clientSecret,
-        refresh_token: this.creds.refreshToken, grant_type: "refresh_token",
-      }),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Google token refresh ${res.status}: ${text.slice(0, 200)}`);
-    const j = JSON.parse(text) as { access_token: string; expires_in?: number };
-    tokens.set(this.creds.refreshToken, { token: j.access_token, exp: Date.now() + (j.expires_in ?? 3600) * 1000 });
-    return j.access_token;
-  }
-
   private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await this.fetchImpl(`${API}${path}`, {
       method,
-      headers: { authorization: `Bearer ${await this.accessToken()}`, ...(body ? { "content-type": "application/json" } : {}) },
+      headers: { authorization: `Bearer ${await accessToken(this.creds, this.fetchImpl)}`, ...(body ? { "content-type": "application/json" } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();

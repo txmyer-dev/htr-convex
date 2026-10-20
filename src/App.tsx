@@ -8,6 +8,9 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { describeGrounding } from "../convex/lib/knowledge/domain";
+import { EMAIL } from "../convex/lib/mail/inbound";
+import { eventWhen, eventWho, signLabel } from "../convex/lib/proposals/lifecycle";
+import { hhmm, ymd, zonedToMs } from "../convex/lib/time";
 
 type Row = NonNullable<ReturnType<typeof useQuery<typeof api.proposals.list>>>[number];
 
@@ -110,7 +113,16 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
   const tenant = useQuery(api.tenants.surface, { slug, key: keyToken });
   const rows = useQuery(api.proposals.list, { slug, key: keyToken, limit: 100 });
   const retrySite = useMutation(api.facts.retrySite);
+  const retrySend = useAction(api.mail.retrySend);
+  const skipFailed = useMutation(api.rulings.skipFailed);
   const [note, setNote] = useState<string | null>(null);
+  const tryNote = async (run: () => Promise<string>) => {
+    try {
+      setNote(await run());
+    } catch (err) {
+      setNote(String(err instanceof Error ? err.message : err));
+    }
+  };
   if (tenant === undefined || rows === undefined) return <main className="shell"><p className="muted">Loading…</p></main>;
   const pending = rows.filter((r) => r.status === "pending");
   const ruled = rows.filter((r) => r.status !== "pending");
@@ -148,6 +160,13 @@ function Surface({ slug, keyToken }: { slug: string; keyToken: string }) {
                   <button className="small" onClick={async () => setNote(await retrySite({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>
                     {p.siteFailure === "unseen" ? "Read the site again" : "Ask again"}
                   </button>
+                )}
+                {/* A failed event card: Retry signs it again; Skip lets it rest (the write may have landed, the reply did not). */}
+                {p.kind === "event" && p.status === "failed" && (
+                  <>
+                    <button className="small" onClick={() => tryNote(async () => (await retrySend({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> })) === "sent" ? "Sent." : "Nothing to do.")}>Retry</button>
+                    <button className="small" onClick={() => tryNote(() => skipFailed({ slug, key: keyToken, proposalId: p.id as Id<"proposals"> }))}>Skip</button>
+                  </>
                 )}
               </Ruled>
             ))}
@@ -277,18 +296,29 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
       <div className="who">
         {p.digestNo ? <span className="n">{p.digestNo}</span> : null}
         <strong>{p.toName || p.toAddress}</strong>
-        <span className="muted"> · {p.sourceKind === "relist" ? "re-listed" : p.kind === "site" ? "website update" : p.kind}{when ? ` · by ${when}` : ""}</span>
+        <span className="muted"> · {p.sourceKind === "relist" ? "re-listed" : p.kind === "site" ? "website update" : p.kind === "event" ? "calendar" : p.kind}{when ? ` · by ${when}` : ""}</span>
       </div>
       {p.subject && <div className="muted">{p.subject}</div>}
       {p.basis[0] && <blockquote>“{p.basis[0]}”</blockquote>}
-      {editing ? (
+      {p.kind === "event" && p.event && (
+        <div className="event">
+          <strong>{p.event.title}</strong>
+          <div>{eventWhen(p.event)}</div>
+          <div className="muted">{eventWho(p.event)}</div>
+          {p.event.clash === "checking" && <div className="muted">Checking your calendar…</div>}
+          {p.event.clash === "busy" && <div className="error">No longer free: approving it sends nothing and offers other times.</div>}
+        </div>
+      )}
+      {editing && p.kind === "event" && p.event ? (
+        <EventEditor p={p} event={p.event} slug={slug} keyToken={keyToken} onNote={onNote} onDone={() => setEditing(false)} />
+      ) : editing ? (
         <textarea value={words} onChange={(e) => setWords(e.target.value)} rows={6} />
       ) : (
         <p className="body">{p.body}</p>
       )}
       {from && <p className="from">{from}</p>}
       {p.gap && <p className="gap">You haven't told me: {p.gap}. {editing ? "Your answer goes out as your words and is remembered." : "Edit with your answer and I'll send it and remember it."}</p>}
-      <div className="actions">
+      {!(editing && p.kind === "event" && p.event) && <div className="actions">
         {editing ? (
           <>
             <button className="primary" disabled={busy || !words.trim()} onClick={() => act("edit")}>Send my words</button>
@@ -296,13 +326,90 @@ function Card({ p, slug, keyToken, onNote }: { p: Row; slug: string; keyToken: s
           </>
         ) : (
           <>
-            <button className="primary" disabled={busy} onClick={() => act("sign")}>{p.kind === "task" ? "Add task" : "Send"}</button>
+            <button className="primary" disabled={busy} onClick={() => act("sign")}>{signLabel(p.kind, p.event)}</button>
             <button disabled={busy} onClick={() => act("reject")}>Skip</button>
             <button disabled={busy} onClick={() => setEditing(true)}>Edit</button>
           </>
         )}
-      </div>
+      </div>}
     </article>
+  );
+}
+
+type CardEvent = NonNullable<Row["event"]>;
+
+/** "YYYY-MM-DD" and "HH:MM" for an instant, in the card's zone (the owner's). */
+function localInputs(ms: number, zone: string) {
+  return { date: ymd(ms, zone), time: hhmm(ms, zone) };
+}
+
+/** The instant a local date and time name in `zone`; null when either is incomplete. Two passes cover a DST edge. */
+function fromLocal(date: string, time: string, zone: string): number | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const t = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!d || !t) return null;
+  return zonedToMs(Number(d[1]), Number(d[2]), Number(d[3]), Number(t[1]), Number(t[2]), zone);
+}
+
+/**
+ * An event card's own edit: what approval will write and the reply that goes with it. A move
+ * changes only its new time and the reply. Saving sends only what changed; a new time is checked
+ * against the calendar and the card says so.
+ */
+function EventEditor({ p, event, slug, keyToken, onNote, onDone }: { p: Row; event: CardEvent; slug: string; keyToken: string; onNote: (s: string) => void; onDone: () => void }) {
+  const save = useMutation(api.rulings.editEvent);
+  const move = event.op === "move";
+  const start = localInputs(event.startMs, event.timeZone);
+  const minutes = Math.round((event.endMs - event.startMs) / 60_000);
+  const [f, setF] = useState({ title: event.title, date: start.date, time: start.time, duration: String(minutes), attendees: event.attendees.join(", "), body: p.body });
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const startMs = fromLocal(f.date, f.time, event.timeZone);
+    if (startMs === null) return setProblem("Pick a date and a time.");
+    const people = f.attendees.split(/[\s,;]+/).filter(Boolean);
+    const bad = people.find((x) => !EMAIL.test(x));
+    if (!move && bad) return setProblem(`“${bad}” isn't an email address.`);
+    const durationMin = Number(f.duration);
+    if (!move && !(Number.isInteger(durationMin) && durationMin > 0)) return setProblem("The length is whole minutes.");
+    if (!f.body.trim()) return setProblem("The reply can't be empty.");
+    setProblem(null);
+    setBusy(true);
+    try {
+      const changed = {
+        ...(startMs !== event.startMs ? { startMs } : {}),
+        ...(f.body.trim() !== p.body.trim() ? { body: f.body } : {}),
+        ...(!move && f.title.trim() !== event.title ? { title: f.title } : {}),
+        ...(!move && durationMin !== minutes ? { durationMin } : {}),
+        ...(!move && people.join(",") !== event.attendees.join(",") ? { attendees: people } : {}),
+      };
+      const note = Object.keys(changed).length ? await save({ slug, key: keyToken, proposalId: p.id as Id<"proposals">, ...changed }) : "Nothing changed.";
+      onNote(note);
+      if (!note.startsWith("Not saved")) onDone();
+    } catch (err) {
+      onNote(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      {!move && <label>Title<input required value={f.title} onChange={set("title")} /></label>}
+      <label>{move ? "New date" : "Date"}<input required type="date" value={f.date} onChange={set("date")} /></label>
+      <label><span>{move ? "New time" : "Time"} <span className="muted">({event.timeZone})</span></span><input required type="time" value={f.time} onChange={set("time")} /></label>
+      {!move && <label><span>Length <span className="muted">(minutes)</span></span><input required type="number" min={5} step={5} value={f.duration} onChange={set("duration")} /></label>}
+      {!move && <label>Attendees<textarea rows={2} value={f.attendees} onChange={set("attendees")} /><span className="hint">Email addresses, separated by commas or lines. Google invites each of them.</span></label>}
+      <label>Reply<textarea rows={6} value={f.body} onChange={set("body")} /></label>
+      {problem && <p className="error">{problem}</p>}
+      <div className="actions">
+        <button className="primary" disabled={busy} type="submit">{busy ? "Saving…" : "Save"}</button>
+        <button type="button" disabled={busy} onClick={onDone}>Back</button>
+      </div>
+    </form>
   );
 }
 

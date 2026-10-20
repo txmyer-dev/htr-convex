@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { extractJson, normalizeBaseUrl, toDraft, userPayload, type DraftRequest } from "../convex/drafter";
+import { extractJson, normalizeBaseUrl, toDraft, userPayload, withSlots, type DraftRequest } from "../convex/drafter";
 import { chatCompletion, contentOf } from "../convex/lib/llm/openaiCompat";
 
 describe("contentOf", () => {
@@ -99,5 +99,20 @@ describe("userPayload", () => {
   test("the owner's corrections ride along as draft -> sent pairs", () => {
     const p = JSON.parse(userPayload({ ...req, lessons: [{ theirMessage: "under $200?", draft: "Yes, the Harlow, $185.", sent: "Yep, $185, come by." }] }));
     expect(p.owner_corrections).toEqual([{ their_message: "under $200?", first_draft: "Yes, the Harlow, $185.", owner_sent: "Yep, $185, come by." }]);
+  });
+  test("schedule rides along only when the calendar decided something", () => {
+    expect(JSON.parse(userPayload(req))).not.toHaveProperty("schedule");
+    const schedule = { decision: "accept_time", time: "Tue Oct 20, 2:00 PM", duration_min: 30 };
+    expect(JSON.parse(userPayload({ ...req, schedule })).schedule).toEqual(schedule);
+  });
+});
+
+describe("withSlots", () => {
+  const zone = "America/Los_Angeles";
+  const offer = { kind: "offer" as const, slots: [{ start: Date.UTC(2026, 9, 20, 16), end: Date.UTC(2026, 9, 20, 16, 30) }, { start: Date.UTC(2026, 9, 21, 21), end: Date.UTC(2026, 9, 21, 21, 30) }] };
+  test("an offer's body names every slot: the ones the model left out are listed", () => {
+    expect(withSlots("Hi Sam, Tue Oct 20, 9:00 AM works. Ben", offer, zone)).toBe("Hi Sam, Tue Oct 20, 9:00 AM works. Ben\n\nWed Oct 21, 2:00 PM");
+    expect(withSlots("Tue Oct 20, 9:00 AM or Wed Oct 21, 2:00 PM?", offer, zone)).toBe("Tue Oct 20, 9:00 AM or Wed Oct 21, 2:00 PM?");
+    expect(withSlots("Sure.", { kind: "none" }, zone)).toBe("Sure.");
   });
 });

@@ -29,12 +29,17 @@ export async function withStatus(ctx: QueryCtx, tenantId: Id<"tenants">, ...stat
 
 export const pendingFor = (ctx: QueryCtx, tenantId: Id<"tenants">) => withStatus(ctx, tenantId, "pending");
 
+/** The newest proposal for a source: an event card that closed unwritten is followed by its redraft (KTD9). */
 export async function bySource(ctx: QueryCtx, tenantId: Id<"tenants">, sourceKind: string, sourceId: string) {
   return await ctx.db
     .query("proposals")
     .withIndex("by_tenant_source", (q) => q.eq("tenantId", tenantId).eq("sourceKind", sourceKind).eq("sourceId", sourceId))
-    .unique();
+    .order("desc")
+    .first();
 }
+
+/** An expired event card wrote nothing and sent nothing; its source gets drafted again (KTD9). */
+export const redraftable = (p: Proposal) => p.kind === "event" && p.status === "expired";
 
 // ---- writes -------------------------------------------------------------------------
 
@@ -47,18 +52,18 @@ export type ProposeArgs = {
   sourceKind?: string;
   sourceId?: string;
   deadline?: number;
-  kind?: "email" | "sms" | "site" | "task";
+  kind?: "email" | "sms" | "site" | "task" | "event";
   meta?: Proposal["meta"];
   grounding?: Proposal["grounding"];
   gap?: string;
   priority?: Proposal["priority"];
 };
 
-/** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId). */
+/** Insert a pending proposal. Idempotent per (tenant, sourceKind, sourceId), past an expired event card. */
 export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposal> {
   if (a.sourceKind && a.sourceId) {
     const existing = await bySource(ctx, a.tenantId, a.sourceKind, a.sourceId);
-    if (existing) return existing;
+    if (existing && !redraftable(existing)) return existing;
   }
   const id = await ctx.db.insert("proposals", {
     tenantId: a.tenantId,
@@ -67,7 +72,7 @@ export async function propose(ctx: MutationCtx, a: ProposeArgs): Promise<Proposa
     toName: a.toName,
     body: a.body,
     basis: a.basis ?? [],
-    summary: summarize(a.toName, a.toAddress, a.body, a.kind ?? "email"),
+    summary: summarize(a.toName, a.toAddress, a.body, a.kind ?? "email", a.meta?.event),
     status: "pending",
     sourceKind: a.sourceKind,
     sourceId: a.sourceId,
@@ -115,7 +120,7 @@ export const retry = (ctx: MutationCtx, id: Id<"proposals">) => transition(ctx, 
 export async function edit(ctx: MutationCtx, id: Id<"proposals">, body: string): Promise<Proposal | null> {
   const p = await ctx.db.get(id);
   if (!p || p.status !== "pending") return null;
-  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body, p.kind) });
+  await ctx.db.patch(id, { body, edited: true, summary: summarize(p.toName, p.toAddress, body, p.kind, p.meta.event) });
   return (await ctx.db.get(id))!;
 }
 
@@ -146,6 +151,7 @@ export const finishSend = internalMutation({
       await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
       return; // a task went to the task list, not to a person: no message row
     }
+    // An event card falls through: its reply is a message in their thread, like any email.
     // A new thread (a site request) is remembered so the web agent's reply in it finds its proposal.
     if (threadId && !p.meta.threadId) await ctx.db.patch(proposalId, { meta: { ...p.meta, threadId } });
     await ctx.db.insert("messages", {
@@ -161,6 +167,41 @@ export const finishSend = internalMutation({
       meta: { subject: p.meta.subject },
     });
     await appendEvent(ctx, p.tenantId, "proposal.sent", { proposalId, edited: p.edited, kind: p.kind });
+  },
+});
+
+/** A closed event card's email is drafted again (KTD9): only an email source has a message to answer. */
+export async function redraftSource(ctx: MutationCtx, p: Proposal) {
+  if (p.sourceKind === "email" && p.sourceId) {
+    await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
+  }
+}
+
+/** The event card's write landed: a retry finds the id and only replies (KTD5). Before the reply, always. */
+export const recordEvent = internalMutation({
+  args: { proposalId: v.id("proposals"), eventId: v.string() },
+  handler: async (ctx, { proposalId, eventId }) => {
+    const p = await ctx.db.get(proposalId);
+    if (!p?.meta.event || p.status !== "sending") return;
+    await ctx.db.patch(proposalId, { meta: { ...p.meta, event: { ...p.meta.event, eventId } } });
+    await appendEvent(ctx, p.tenantId, "event.written", { proposalId, eventId, op: p.meta.event.op });
+  },
+});
+
+/**
+ * The card's time stopped being clean before it was written (R16): it closes as expired, not
+ * failed, with the reason, and its email is drafted again, which now offers free slots. Event
+ * cards only, and only mid-send: the lifecycle's sending -> expired is this path alone.
+ */
+export const closeNoLongerFree = internalMutation({
+  args: { proposalId: v.id("proposals"), reason: v.string() },
+  handler: async (ctx, { proposalId, reason }): Promise<boolean> => {
+    const p = await ctx.db.get(proposalId);
+    if (!p || p.kind !== "event" || p.status !== "sending") return false;
+    await ctx.db.patch(proposalId, { status: "expired", error: reason, ruledAt: Date.now() });
+    await appendEvent(ctx, p.tenantId, "event.no_longer_free", { proposalId, reason });
+    await redraftSource(ctx, p);
+    return true;
   },
 });
 
@@ -186,6 +227,7 @@ export const list = query({
       basis: p.basis, summary: p.summary, deadline: p.deadline, digestNo: p.digestNo, edited: p.edited,
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, subject: p.meta.subject,
       sourceKind: p.sourceKind, grounding: p.grounding ?? null, gap: p.gap ?? null, siteFailure: p.meta.siteFailure ?? null,
+      event: p.meta.event ?? null, // an event card: what approval writes, and for a move where it sits now
     }));
   },
 });

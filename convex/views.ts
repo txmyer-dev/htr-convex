@@ -9,6 +9,7 @@ export type ProposalView = {
   id: Id<"proposals">; status: Doc<"proposals">["status"]; kind: string; toAddress: string; toName?: string; body: string;
   basis: string[]; summary: string; subject?: string; deadline?: number; digestNo?: number; edited: boolean;
   createdAt: number; ruledAt?: number; sentAt?: number; error?: string; grounding?: Doc<"proposals">["grounding"]; gap?: string;
+  event?: Doc<"proposals">["meta"]["event"]; // an event card
 };
 
 export const proposals = internalQuery({
@@ -20,6 +21,7 @@ export const proposals = internalQuery({
       id: p._id, status: p.status, kind: p.kind, toAddress: p.toAddress, toName: p.toName, body: p.body, basis: p.basis,
       summary: p.summary, subject: p.meta.subject, deadline: p.deadline, digestNo: p.digestNo, edited: p.edited,
       createdAt: p.createdAt, ruledAt: p.ruledAt, sentAt: p.sentAt, error: p.error, grounding: p.grounding, gap: p.gap,
+      event: p.meta.event,
     }));
   },
 });

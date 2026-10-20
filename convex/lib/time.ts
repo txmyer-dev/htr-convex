@@ -47,6 +47,13 @@ export function offsetAt(ms: number, timeZone: string): number {
   return wall - Math.floor(ms / 60000) * 60000;
 }
 
+/** The instant (ms UTC) a wall-clock time names in `timeZone` (month 1-12). Two passes cover a DST edge. */
+export function zonedToMs(year: number, month: number, day: number, hour: number, minute: number, timeZone: string): number {
+  const wall = Date.UTC(year, month - 1, day, hour, minute);
+  const first = wall - offsetAt(wall, timeZone);
+  return wall - offsetAt(first, timeZone);
+}
+
 /** The instant (ms UTC) of `hour`:00 local, `daysAhead` local days from now. */
 export function atLocalHour(nowMs: number, timeZone: string, daysAhead: number, hour: number, minute = 0): number {
   const p = localParts(nowMs, timeZone);
@@ -73,4 +80,10 @@ export function localDaysBetween(from: number, to: number, timeZone: string): nu
 export function hhmm(ms: number, timeZone: string): string {
   const p = localParts(ms, timeZone);
   return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+}
+
+/** "YYYY-MM-DD" local. */
+export function ymd(ms: number, timeZone: string): string {
+  const p = localParts(ms, timeZone);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }

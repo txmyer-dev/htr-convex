@@ -2,6 +2,8 @@
 // it, merged by time. The surface shows it under every ruled item ("what did it actually do?").
 // Pure: the query hands over the rows, this decides what each one says.
 
+import type { CardEvent } from "./lifecycle";
+
 // `_creationTime` orders the two tables into one story: it is unique and increasing where `at` can tie.
 export type TimelineEvent = { kind: string; payload: unknown; at: number; _creationTime: number };
 export type TimelineRuling = { from: string; verdict: string; at: number; _creationTime: number };
@@ -26,7 +28,8 @@ function firstLine(text: string | undefined, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-export function describeEvent(kind: string, payload: unknown, site: boolean): Omit<Step, "at"> | null {
+/** `eventOp`: the card's calendar operation, for an event card. */
+export function describeEvent(kind: string, payload: unknown, site: boolean, eventOp?: CardEvent["op"]): Omit<Step, "at"> | null {
   const p = (payload && typeof payload === "object" ? payload : {}) as P;
   switch (kind) {
     case "proposal.created":
@@ -35,6 +38,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean): Om
       return { text: "Drafted from their message", tone: "ok" };
     case "proposal.sent":
       if (site) return { text: "Sent to your website's agent, signed, with you copied", tone: "ok" };
+      if (eventOp === "move") return { text: "Moved on your calendar, update sent, replied in thread", tone: "ok" };
+      if (eventOp) return { text: "Added to your calendar, invite sent, replied in thread", tone: "ok" };
       return { text: p.edited ? "Sent in their thread, in your words" : "Sent in their thread", tone: "ok" };
     case "proposal.send_failed":
       // The row above already shows the whole error; the story needs only its start.
@@ -56,6 +61,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean): Om
       return { text: "Failed: the agent said live, but the site never showed it", tone: "bad" };
     case "site.live":
       return { text: `Read the site: it's there${str(p.url) ? ` (${str(p.url)})` : ""}. Live.`, tone: "ok" };
+    case "event.edited":
+      return { text: "You changed the event on this page", tone: "ok" };
     case "site.recheck":
       return { text: "You asked to read the site again", tone: "ok" };
     case "site.resent":
@@ -69,7 +76,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean): Om
   }
 }
 
-export function describeRuling(r: TimelineRuling): Omit<Step, "at"> | null {
+/** `kind`: the proposal's, so an expired event card says what really happened to it. */
+export function describeRuling(r: TimelineRuling, kind?: string): Omit<Step, "at"> | null {
   switch (r.verdict) {
     case "sign":
       return { text: `Signed by you, ${via(r.from)}`, tone: "ok" };
@@ -78,6 +86,7 @@ export function describeRuling(r: TimelineRuling): Omit<Step, "at"> | null {
     case "reject":
       return { text: `Skipped by you, ${via(r.from)}`, tone: "bad" };
     case "expired":
+      if (kind === "event") return { text: "Expired before the meeting; drafted again", tone: "bad" };
       return { text: "Expired with no ruling: they were told a reply is coming", tone: "bad" };
     default:
       return null; // ignored replies and commands are not steps of this request
@@ -94,14 +103,15 @@ function pending(status: string, site: boolean, last: TimelineEvent | undefined)
 }
 
 export function buildTimeline(
-  proposal: { kind: string; status: string },
+  proposal: { kind: string; status: string; meta?: { event?: { op: CardEvent["op"] } } },
   events: TimelineEvent[],
   rulings: TimelineRuling[],
 ): Step[] {
   const site = proposal.kind === "site";
+  const op = proposal.kind === "event" ? (proposal.meta?.event?.op ?? "insert") : undefined;
   const rows = [
-    ...events.map((e) => ({ at: e.at, seq: e._creationTime, step: describeEvent(e.kind, e.payload, site) })),
-    ...rulings.map((r) => ({ at: r.at, seq: r._creationTime, step: describeRuling(r) })),
+    ...events.map((e) => ({ at: e.at, seq: e._creationTime, step: describeEvent(e.kind, e.payload, site, op) })),
+    ...rulings.map((r) => ({ at: r.at, seq: r._creationTime, step: describeRuling(r, proposal.kind) })),
   ];
   const steps: Step[] = rows
     .filter((r) => r.step)

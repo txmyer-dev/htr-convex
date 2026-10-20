@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { canMove, STATUSES, summarize, TERMINAL, TRANSITIONS } from "../convex/lib/proposals/lifecycle";
+import { canMove, skippableWhenFailed, STATUSES, summarize, TERMINAL, TRANSITIONS } from "../convex/lib/proposals/lifecycle";
 
 describe("lifecycle", () => {
   test("the happy path and the two dead ends", () => {
@@ -18,7 +18,7 @@ describe("lifecycle", () => {
   });
 
   test("a failed send goes back to signed; a failed site request may also go back to sent, to be read again", () => {
-    expect(TRANSITIONS.failed).toEqual(["signed", "sent"]);
+    expect(TRANSITIONS.failed).toEqual(["signed", "sent", "rejected"]);
     expect(canMove("failed", "live")).toBe(false);
   });
 
@@ -27,6 +27,12 @@ describe("lifecycle", () => {
     expect(canMove("sent", "failed")).toBe(true);
     expect(canMove("live", "sent")).toBe(false);
     expect(TRANSITIONS.sent).toEqual(["live", "signed", "failed"]);
+  });
+
+  test("only a failed event card may be skipped (the table allows it; the kind gate says for whom)", () => {
+    expect(canMove("failed", "rejected")).toBe(true);
+    expect(skippableWhenFailed("event")).toBe(true);
+    for (const k of ["email", "sms", "site", "task"]) expect(skippableWhenFailed(k)).toBe(false);
   });
 
   test("terminal states have no exits", () => {

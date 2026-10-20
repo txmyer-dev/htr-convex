@@ -8,6 +8,7 @@ import type { Doc } from "../convex/_generated/dataModel";
 import { clawsOf, mailClaw } from "../convex/adapters/resolve";
 import { mintState, readState } from "../convex/gmail";
 import { TENANTS } from "../convex/install";
+import { hasCalendar } from "../convex/lib/google/auth";
 import { b64url, buildRaw, Gmail, PULL_QUERY, textOf, toInbound, unb64url, type GmailMessage } from "../convex/lib/mail/gmail";
 import schema from "../convex/schema";
 import { surfaceKey } from "../convex/surface";
@@ -50,7 +51,7 @@ function message(id: string, over: { from?: string; subject?: string; text?: str
 }
 
 /** A stubbed Google: token refresh, list, get, send. Records every call. */
-function google(o: { list?: string[]; messages?: Record<string, GmailMessage>; profile?: string } = {}) {
+function google(o: { list?: string[]; messages?: Record<string, GmailMessage>; profile?: string; granted?: string } = {}) {
   const calls: Array<{ method: string; url: string; body?: string }> = [];
   const sent: Array<{ raw: string; threadId?: string }> = [];
   const f = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
@@ -60,7 +61,7 @@ function google(o: { list?: string[]; messages?: Record<string, GmailMessage>; p
     if (url === "https://oauth2.googleapis.com/token") {
       const p = new URLSearchParams(String(init.body));
       if (p.get("grant_type") === "authorization_code") {
-        return json({ access_token: "at-code", refresh_token: "rt-new", scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send" });
+        return json({ access_token: "at-code", refresh_token: "rt-new", scope: o.granted ?? ALL_SCOPES });
       }
       return json({ access_token: `at-${p.get("refresh_token")}`, expires_in: 3600 });
     }
@@ -78,6 +79,9 @@ function google(o: { list?: string[]; messages?: Record<string, GmailMessage>; p
   });
   return { f: f as unknown as typeof fetch, calls, sent };
 }
+
+const MAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
+const ALL_SCOPES = `${MAIL_SCOPES} https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.owned`;
 
 let rt = 0;
 const creds = () => ({ clientId: "cid", clientSecret: "csec", refreshToken: `rt-${++rt}` }); // fresh token each test: the access-token cache is per refresh token
@@ -212,7 +216,10 @@ async function setup(grant = true) {
 
 describe("the pull", () => {
   test("new mail lands in receive once: a person is drafted, a newsletter is recorded, a second pull takes nothing", async () => {
-    const { t, tenantId } = await setup();
+    const { t, tenantId } = await setup(); // covers AE5: a grant from before scopes were recorded (no scope) still pulls
+    const grant = (await t.run(async (ctx) => await ctx.db.get(tenantId)))?.channels.gmail;
+    expect(grant?.scope).toBeUndefined();
+    expect(hasCalendar(grant?.scope)).toBe(false);
     const g = google({
       list: ["n1", "p1"],
       messages: {
@@ -252,7 +259,7 @@ describe("consent over HTTP", () => {
     const to = new URL(res.headers.get("location")!);
     expect(to.origin + to.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
     expect(to.searchParams.get("redirect_uri")).toBe("https://ben.example.com/oauth/google/callback");
-    expect(to.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send");
+    expect(to.searchParams.get("scope")!.split(" ").sort()).toEqual(ALL_SCOPES.split(" ").sort());
     expect(to.searchParams.get("access_type")).toBe("offline");
     expect(await readState(to.searchParams.get("state")!)).toBe("ben");
   });
@@ -263,8 +270,32 @@ describe("consent over HTTP", () => {
     expect((await t.fetch("/oauth/google/callback?code=c&state=ben.1.forged")).status).toBe(400);
     const ok = await t.fetch(`/oauth/google/callback?code=c&state=${encodeURIComponent(await mintState("ben"))}`);
     expect(ok.status).toBe(200);
-    expect(await ok.text()).toContain("Gmail connected");
+    const text = await ok.text();
+    expect(text).toContain("Gmail connected");
+    expect(text).toContain("Calendar connected");
     const after = await t.run(async (ctx) => await ctx.db.get(tenantId));
-    expect(after?.channels.gmail).toMatchObject({ address: "ben@gmail.com", refreshToken: "rt-new" });
+    expect(after?.channels.gmail).toMatchObject({ address: "ben@gmail.com", refreshToken: "rt-new", scope: ALL_SCOPES });
+  });
+
+  test("calendar boxes unticked: accepted, stored as mail only, and the page says calendar was not connected", async () => {
+    const { t, tenantId } = await setup(false);
+    vi.stubGlobal("fetch", google({ granted: MAIL_SCOPES }).f);
+    const ok = await t.fetch(`/oauth/google/callback?code=c&state=${encodeURIComponent(await mintState("ben"))}`);
+    expect(ok.status).toBe(200);
+    const text = await ok.text();
+    expect(text).toContain("Gmail connected");
+    expect(text).toContain("Calendar not connected");
+    const after = await t.run(async (ctx) => await ctx.db.get(tenantId));
+    expect(after?.channels.gmail).toMatchObject({ refreshToken: "rt-new", scope: MAIL_SCOPES });
+    expect(hasCalendar(after?.channels.gmail?.scope)).toBe(false);
+  });
+
+  test("a grant without gmail.send is refused, and nothing is kept", async () => {
+    const { t, tenantId } = await setup(false);
+    vi.stubGlobal("fetch", google({ granted: ALL_SCOPES.replace(" https://www.googleapis.com/auth/gmail.send", "") }).f);
+    const res = await t.fetch(`/oauth/google/callback?code=c&state=${encodeURIComponent(await mintState("ben"))}`);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("read and send");
+    expect((await t.run(async (ctx) => await ctx.db.get(tenantId)))?.channels.gmail).toBeUndefined();
   });
 });

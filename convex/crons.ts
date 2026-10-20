@@ -1,4 +1,4 @@
-// The clock. Hourly: overdue drafts stop waiting, and the heartbeat probes every claw. Every two minutes: Gmail inboxes are read. Every quarter hour: demo leases that ran out are released.
+// The clock. Hourly: overdue drafts stop waiting, and the heartbeat probes every claw. Every two minutes: Gmail inboxes are read. Every ten: calendar snapshots are refreshed. Every quarter hour: demo leases that ran out are released.
 // Every minute: any tenant whose digest hour (or weekly last call) is now gets one (immediate-mode tenants are served
 // by the debounced scheduler instead). Monday mornings: every business site is read again.
 
@@ -32,5 +32,6 @@ crons.interval("release demo leases", { minutes: 15 }, internal.demo.sweep, {});
 crons.interval("read open tasks back from ClickUp", { minutes: 15 }, internal.tasks.sync, {});
 crons.interval("probe every claw", { hours: 1 }, internal.health.beat, {});
 crons.interval("pull Gmail inboxes", { minutes: 2 }, internal.gmail.pullAll, {});
+crons.interval("refresh the calendar snapshots", { minutes: 10 }, internal.calendar.refreshAll, {});
 crons.cron("read the business sites again", "0 9 * * 1", internal.knowledge.refreshAll, {});
 export default crons;

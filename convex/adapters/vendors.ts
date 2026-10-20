@@ -1,6 +1,8 @@
 // One adapter per vendor, each a thin wrap of its wire in lib/*. Nothing here reads the
 // environment or the tenant: ./resolve.ts hands each one its credentials.
 
+import { GoogleCalendar } from "../lib/calendar/google";
+import type { GoogleCreds } from "../lib/google/auth";
 import { AgentMail } from "../lib/mail/agentmail";
 import { getMeeting, whoAmI } from "../lib/meetings/fireflies";
 import { Gmail, type GmailCreds } from "../lib/mail/gmail";
@@ -9,7 +11,7 @@ import { embed } from "../lib/llm/embed";
 import { push } from "../lib/notify/ntfy";
 import { crawl, scrape } from "../lib/reader/firecrawl";
 import { createTask, getTask, openTasksTagged } from "../lib/tasks/clickup";
-import type { LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, ReaderClaw, TaskClaw } from "./ports";
+import type { CalendarClaw, LlmClaw, MailClaw, MeetingsClaw, NotifyClaw, ReaderClaw, TaskClaw } from "./ports";
 
 type Fetch = typeof fetch;
 
@@ -49,6 +51,28 @@ export function gmail(creds: GmailCreds, address: string | undefined, f: Fetch =
     pull: (sinceMs, seen) => c.pull(sinceMs, seen),
     probe: async () => {
       await c.profile();
+    },
+  };
+}
+
+/** The probe is a short free/busy over every non-hidden calendar: one failing one makes every time unknown (KTD7). */
+export function googleCalendar(creds: GoogleCreds, f: Fetch = fetch): CalendarClaw {
+  const c = new GoogleCalendar(creds, f);
+  return {
+    name: "google-calendar",
+    calendars: () => c.calendars(),
+    events: (w, ids) => c.events(w, ids),
+    freeBusy: (w, ids) => c.freeBusy(w, ids),
+    primaryBusy: (w, exclude) => c.primaryBusy(w, exclude),
+    get: (id) => c.get(id),
+    insert: (ev, id) => c.insert(ev, id),
+    move: (id, start, end, tz) => c.move(id, start, end, tz),
+    probe: async () => {
+      const cals = await c.calendars();
+      const now = Date.now();
+      const { errors } = await c.freeBusy({ start: now, end: now + 3_600_000 }, cals.map((x) => x.id));
+      const bad = cals.filter((x) => errors[x.id]).map((x) => `${x.summary} (${errors[x.id]})`);
+      if (bad.length) throw new Error(`free/busy failed for ${bad.join(", ")}`);
     },
   };
 }

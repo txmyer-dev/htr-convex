@@ -44,7 +44,8 @@ export const tenantFields = {
     webhookSecret: v.optional(v.string()), // this inbox's Svix secret; AGENTMAIL_WEBHOOK_SECRET is the fallback
     // The owner's Gmail consent (GET /oauth/google/{slug}/start): kept here like the webhook secret,
     // because consent arrives over HTTP and an HTTP route cannot set an env var. GOOGLE_REFRESH_TOKEN is the fallback.
-    gmail: v.optional(v.object({ address: v.string(), refreshToken: v.string(), grantedAt: v.number() })),
+    // scope: what Google granted (space-separated); absent on a grant from before it was kept, which is mail only.
+    gmail: v.optional(v.object({ address: v.string(), refreshToken: v.string(), grantedAt: v.number(), scope: v.optional(v.string()) })),
   }),
   // Where approved tasks go (kind "task" proposals). The token is CLICKUP_API_TOKEN on the deployment.
   // byLane sends a call's items to that entity's list (the line's lane); anything else goes to the default.
@@ -89,6 +90,24 @@ export const grounding = v.object({
   links: v.optional(v.array(v.object({ url: v.string(), title: v.optional(v.string()), fetchedAt: v.number() }))),
 });
 
+/** A span of time, ms since epoch: start inclusive, end exclusive. */
+export const interval = v.object({ start: v.number(), end: v.number() });
+
+/** An event card (proposals.meta.event): what approval writes to the primary calendar. Google notifies every attendee. */
+export const eventMeta = v.object({
+  op: v.union(v.literal("insert"), v.literal("move")),
+  title: v.string(),
+  startMs: v.number(),
+  endMs: v.number(),
+  timeZone: v.string(), // the owner's, when drafted: the card shows times in it
+  attendees: v.array(v.string()), // emails
+  targetEventId: v.optional(v.string()), // a move: the event it moves
+  previousStartMs: v.optional(v.number()), // a move: where that event sits now
+  previousEndMs: v.optional(v.number()),
+  eventId: v.optional(v.string()), // once written
+  clash: v.optional(v.union(v.literal("checking"), v.literal("clear"), v.literal("busy"))), // the web edit's clash check (KTD10)
+});
+
 export default defineSchema({
   tenants: defineTable(tenantFields).index("by_slug", ["slug"]),
 
@@ -121,6 +140,33 @@ export default defineSchema({
   })
     .index("by_tenant_meeting", ["tenantId", "meetingId"])
     .index("by_tenant_digest", ["tenantId", "digestId"]),
+
+  // The owner's calendars, local today through the next 7 days (calendar.ts). A snapshot, not a
+  // record: each refresh replaces the tenant's rows whole. The desk's Today zone and move matching read it.
+  calendarEvents: defineTable({
+    tenantId: v.id("tenants"),
+    eventId: v.string(),
+    calendarId: v.string(),
+    calendar: v.string(), // the calendar's name as the owner sees it
+    title: v.string(),
+    allDay: v.boolean(),
+    startMs: v.number(),
+    endMs: v.number(),
+    status: v.string(), // confirmed | tentative | cancelled
+    attendees: v.array(v.string()), // lowercased
+    organizerSelf: v.boolean(),
+    responseStatus: v.optional(v.string()), // the owner's own answer, when invited
+  }).index("by_tenant_start", ["tenantId", "startMs"]),
+
+  // How fresh each tenant's snapshot is: the window last stored, when, and the last refresh that failed (cleared on success).
+  calendarSnapshots: defineTable({
+    tenantId: v.id("tenants"),
+    windowStart: v.optional(v.number()),
+    windowEnd: v.optional(v.number()),
+    refreshedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  }).index("by_tenant", ["tenantId"]),
 
   // Which data migrations this deployment has run (migrations.ts).
   migrations: defineTable({ name: v.string(), at: v.number() }).index("by_name", ["name"]),
@@ -155,8 +201,9 @@ export default defineSchema({
 
   proposals: defineTable({
     tenantId: v.id("tenants"),
-    // site: a request to the web agent, see facts.ts. task: a to-do for the owner's task list, see tasks.ts
-    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site"), v.literal("task")),
+    // site: a request to the web agent, see facts.ts. task: a to-do for the owner's task list, see tasks.ts.
+    // event: a calendar write and its reply in thread, ruled together (body is the reply)
+    kind: v.union(v.literal("email"), v.literal("sms"), v.literal("site"), v.literal("task"), v.literal("event")),
     toAddress: v.string(),
     toName: v.optional(v.string()),
     body: v.string(),
@@ -197,6 +244,10 @@ export default defineSchema({
         status: v.optional(v.string()), // ClickUp's own status name, as last read
         syncedAt: v.optional(v.number()),
       })),
+      // An event card: what approval writes to the primary calendar.
+      event: v.optional(eventMeta),
+      // A slot offer (an email card): the times it offers, so a later pick can be matched.
+      offer: v.optional(v.object({ slots: v.array(interval) })),
     }),
     createdAt: v.number(),
     ruledAt: v.optional(v.number()),

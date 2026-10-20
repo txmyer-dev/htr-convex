@@ -3,6 +3,8 @@
 // (lib/*) and is chosen per tenant by ./resolve.ts. A port that writes only ever runs on a
 // ruled proposal (_decisions#integrations-are-the-claws).
 
+import type { Interval } from "../lib/calendar/availability";
+import type { CalendarEvent, CalendarInfo, FreeBusy, NewEvent } from "../lib/calendar/google";
 import type { ChatMessage } from "../lib/llm/openaiCompat";
 import type { InboundMail } from "../lib/mail/inbound";
 import type { Meeting } from "../lib/meetings/fireflies";
@@ -55,4 +57,21 @@ export interface MeetingsClaw extends Probe {
   get(meetingId: string): Promise<Meeting | null>;
 }
 
-export type Port = "mail" | "tasks" | "notify" | "reader" | "llm" | "meetings";
+/**
+ * The owner's calendars (Google). Reads run unruled; insert and move write to `primary` only and
+ * are called only from the event dispatcher, on a signed card.
+ */
+export interface CalendarClaw extends Probe {
+  calendars(): Promise<CalendarInfo[]>;
+  /** Events in the window across `calendarIds`, default every non-hidden calendar. */
+  events(window: Interval, calendarIds?: string[]): Promise<CalendarEvent[]>;
+  /** Busy per calendar; a calendar in `errors` is unknown, never free. */
+  freeBusy(window: Interval, calendarIds: string[]): Promise<FreeBusy>;
+  /** Busy on `primary` with one event left out (the card's own, or the one being moved). */
+  primaryBusy(window: Interval, excludeEventId?: string): Promise<Interval[]>;
+  get(id: string): Promise<CalendarEvent | null>;
+  insert(event: NewEvent, id: string): Promise<{ exists: true } | { exists: false; event: CalendarEvent }>;
+  move(id: string, start: number, end: number, timeZone: string): Promise<CalendarEvent>;
+}
+
+export type Port = "mail" | "tasks" | "notify" | "reader" | "llm" | "meetings" | "calendar";
