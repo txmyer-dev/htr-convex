@@ -4,12 +4,14 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import { TENANTS } from "../convex/install";
 import { INTENT_SYSTEM } from "../convex/lib/calendar/intent";
+import { buildTimeline } from "../convex/lib/proposals/timeline";
 import { CALENDAR_OWNED, CALENDAR_READ, GMAIL_READ, GMAIL_SEND } from "../convex/lib/google/auth";
 import schema from "../convex/schema";
+import { surfaceKey } from "../convex/surface";
 
 const modules = import.meta.glob("../convex/**/*.ts");
 const ENV = ["HTR_RULING_SECRET", "CONVEX_SITE_URL", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "OPENAI_API_KEY", "FIRECRAWL_API_KEY"];
@@ -40,6 +42,7 @@ function world(w: { extraction: string; primary?: Busy[] }) {
     if (url.hostname === "www.googleapis.com") {
       if (url.pathname === "/calendar/v3/users/me/calendarList") return json({ items: [{ id: "ben@gmail.com", summary: "Ben", primary: true }, { id: "family@group", summary: "Family" }] });
       if (url.pathname === "/calendar/v3/freeBusy") return json({ calendars: { "family@group": { busy: [] } } });
+      if (url.pathname.startsWith("/calendar/v3/calendars/primary/events/")) return json({ error: { message: "Not Found" } }, 404);
       if (url.pathname === "/calendar/v3/calendars/primary/events") {
         return json({ timeZone: ZONE, items: state.primary.map((b, i) => ({ id: `busy${i}`, status: "confirmed", summary: "Busy", start: { dateTime: iso(b.start) }, end: { dateTime: iso(b.end) } })) });
       }
@@ -77,7 +80,7 @@ const scheduled = (t: T, name: string) =>
   t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).filter((s) => s.name.includes(name) && s.state.kind === "pending"));
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout"] }); // scheduled jobs wait until a test runs them by hand
   vi.setSystemTime(NOW);
 });
 afterEach(() => {
@@ -165,5 +168,147 @@ describe("the weekly last call", () => {
     await t.mutation(internal.digest.build, { tenantId, weekly: true });
     expect((await get(t, other)).status).toBe("expired");
     expect((await get(t, card)).status).toBe("pending");
+  });
+});
+
+// ---- the web edit (KTD10) --------------------------------------------------------------------
+
+type CardEvent = NonNullable<Doc<"proposals">["meta"]["event"]>;
+const TUE_2PM = pdt(20, 14);
+const insertEvent: CardEvent = { op: "insert", title: "Meeting with Sam", startMs: TUE_2PM, endMs: TUE_2PM + 30 * MIN, timeZone: ZONE, attendees: [SAM] };
+const moveEvent: CardEvent = {
+  op: "move", title: "Weekly sync", startMs: pdt(22, 13), endMs: pdt(22, 14), timeZone: ZONE, attendees: ["ben@gmail.com", SAM],
+  targetEventId: "e1", previousStartMs: pdt(21, 10), previousEndMs: pdt(21, 11),
+};
+type Check = { proposalId: Id<"proposals">; startMs: number; endMs: number };
+
+async function pendingCard(t: T, tenantId: Id<"tenants">, event: CardEvent = insertEvent) {
+  const messageId = await inbound(t, tenantId, "Can we do Tuesday 2pm?");
+  const id = await t.run((ctx) => ctx.db.insert("proposals", {
+    tenantId, kind: "event", toAddress: SAM, toName: "Sam", body: "Tuesday at 2 works. Ben", basis: ["Can we do Tuesday 2pm?"], summary: "Event",
+    status: "pending", sourceKind: "email", sourceId: messageId, edited: false, deadline: NOW + 86_400_000,
+    meta: { subject: "Meeting", threadId: "thr_sam", messageId: "<m@example.com>", event }, createdAt: NOW,
+  }));
+  return { id, messageId };
+}
+
+describe("editEvent", () => {
+  test("without the surface key it is refused", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId);
+    await expect(t.mutation(api.rulings.editEvent, { slug: "ben", key: "wrong", proposalId: id, title: "Hijacked" })).rejects.toThrow("bad surface key");
+    expect((await get(t, id)).meta.event!.title).toBe("Meeting with Sam");
+  });
+
+  test("an attendee that isn't an email address is refused, and nothing changes", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    const note = await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, attendees: [SAM, "kim at example"], title: "New title" });
+    expect(note).toBe("Not saved: “kim at example” isn't an email address.");
+    expect((await get(t, id)).meta.event).toEqual(insertEvent);
+  });
+
+  test("title, time, attendees and words change together; the summary follows the new time", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, {
+      slug: "ben", key, proposalId: id, title: " Kitchen walkthrough ", startMs: pdt(20, 15), durationMin: 60,
+      attendees: [" Sam@Example.com", "kim@example.com"], body: "3pm Tuesday works, invite on its way. Ben",
+    });
+    const p = await get(t, id);
+    expect(p.meta.event).toEqual({ ...insertEvent, title: "Kitchen walkthrough", startMs: pdt(20, 15), endMs: pdt(20, 16), attendees: ["sam@example.com", "kim@example.com"], clash: "checking" });
+    expect(p.body).toBe("3pm Tuesday works, invite on its way. Ben");
+    expect(p.summary).toBe("Event: Tue Oct 20, 3:00 PM with Sam");
+  });
+
+  test("a move card edits only its new time and its words", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId, moveEvent);
+    const key = await surfaceKey("ben");
+    expect(await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, attendees: [SAM, "eve@example.com"] }))
+      .toBe("Not saved: a move changes only the new time and the reply.");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(22, 15) });
+    expect((await get(t, id)).meta.event).toEqual({ ...moveEvent, startMs: pdt(22, 15), endMs: pdt(22, 16), clash: "checking" });
+  });
+
+  test("a time edited onto a busy slot reads no longer free; approving it closes the card and drafts the email again", async () => {
+    const { t, tenantId } = await setup();
+    vi.stubGlobal("fetch", world({ extraction: "{}", primary: [{ start: pdt(20, 15), end: pdt(20, 16) }] }).f);
+    const { id, messageId } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(20, 15) });
+    const listed = async () => (await t.query(api.proposals.list, { slug: "ben", key })).find((r) => r.id === id)!;
+    expect((await listed()).event!.clash).toBe("checking");
+
+    const checks = await scheduled(t, "calendar:checkClash");
+    expect(checks).toHaveLength(1);
+    await t.action(internal.calendar.checkClash, checks[0].args[0] as Check);
+    expect((await listed()).event!.clash).toBe("busy");
+
+    await t.mutation(api.rulings.ruleFromSurface, { slug: "ben", key, proposalId: id, verdict: "sign" });
+    expect(await t.action(internal.mail.dispatch, { proposalId: id })).toBe("no longer free");
+    const p = await get(t, id);
+    expect(p.status).toBe("expired");
+    expect(p.error).toBe("Tue Oct 20, 3:00 PM is no longer free");
+    expect((await scheduled(t, "drafter:draft")).map((j) => j.args[0])).toEqual([{ messageId }]);
+  });
+
+  test("a free slot checks clear", async () => {
+    const { t, tenantId } = await setup();
+    vi.stubGlobal("fetch", world({ extraction: "{}", primary: [{ start: pdt(20, 15), end: pdt(20, 16) }] }).f);
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(20, 10) });
+    const [check] = await scheduled(t, "calendar:checkClash");
+    await t.action(internal.calendar.checkClash, check.args[0] as Check);
+    expect((await get(t, id)).meta.event!.clash).toBe("clear");
+  });
+
+  test("a clash check for a time the owner has since changed again records nothing", async () => {
+    const { t, tenantId } = await setup();
+    vi.stubGlobal("fetch", world({ extraction: "{}", primary: [{ start: pdt(20, 15), end: pdt(20, 16) }] }).f);
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(20, 15) });
+    const [stale] = await scheduled(t, "calendar:checkClash");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, startMs: pdt(20, 10) });
+    await t.action(internal.calendar.checkClash, stale.args[0] as Check);
+    expect((await get(t, id)).meta.event!.clash).toBe("checking");
+  });
+
+  test("edited words become a lesson only when the card is approved: the drafter's words against the final ones", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, body: "First try. Ben" });
+    await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, body: "Tuesday 2pm is great, see you. Ben" });
+    const edits = () => t.run(async (ctx) => (await ctx.db.query("rulings").collect()).filter((r) => r.verdict === "edit"));
+    expect(await edits()).toEqual([]);
+
+    await t.mutation(api.rulings.ruleFromSurface, { slug: "ben", key, proposalId: id, verdict: "sign" });
+    expect(await edits()).toMatchObject([{ proposalId: id, draftBody: "Tuesday at 2 works. Ben", editBody: "Tuesday 2pm is great, see you. Ben" }]);
+    expect((await get(t, id)).status).toBe("signed");
+  });
+
+  test("a card that isn't pending is not edited", async () => {
+    const { t, tenantId } = await setup();
+    const { id } = await pendingCard(t, tenantId);
+    const key = await surfaceKey("ben");
+    await t.run((ctx) => ctx.db.patch(id, { status: "signed" }));
+    expect(await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: id, title: "Late" })).toBe("Nothing waiting under that card.");
+    expect((await get(t, id)).meta.event!.title).toBe("Meeting with Sam");
+  });
+});
+
+describe("the timeline of an expired event card", () => {
+  test("says it was drafted again, not that they were told a reply is coming", () => {
+    const steps = buildTimeline(
+      { kind: "event", status: "expired", meta: { event: { op: "insert" } } },
+      [{ kind: "proposal.created", payload: {}, at: NOW, _creationTime: 1 }],
+      [{ from: "clock", verdict: "expired", at: NOW, _creationTime: 2 }],
+    );
+    expect(steps.map((s) => s.text)).toEqual(["Drafted from their message", "Expired before the meeting; drafted again"]);
   });
 });

@@ -59,6 +59,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean, eve
       return { text: "Failed: the agent said live, but the site never showed it", tone: "bad" };
     case "site.live":
       return { text: `Read the site: it's there${str(p.url) ? ` (${str(p.url)})` : ""}. Live.`, tone: "ok" };
+    case "event.edited":
+      return { text: "You changed the event on this page", tone: "ok" };
     case "site.recheck":
       return { text: "You asked to read the site again", tone: "ok" };
     case "site.resent":
@@ -72,7 +74,8 @@ export function describeEvent(kind: string, payload: unknown, site: boolean, eve
   }
 }
 
-export function describeRuling(r: TimelineRuling): Omit<Step, "at"> | null {
+/** `kind`: the proposal's, so an expired event card says what really happened to it. */
+export function describeRuling(r: TimelineRuling, kind?: string): Omit<Step, "at"> | null {
   switch (r.verdict) {
     case "sign":
       return { text: `Signed by you, ${via(r.from)}`, tone: "ok" };
@@ -81,6 +84,7 @@ export function describeRuling(r: TimelineRuling): Omit<Step, "at"> | null {
     case "reject":
       return { text: `Skipped by you, ${via(r.from)}`, tone: "bad" };
     case "expired":
+      if (kind === "event") return { text: "Expired before the meeting; drafted again", tone: "bad" };
       return { text: "Expired with no ruling: they were told a reply is coming", tone: "bad" };
     default:
       return null; // ignored replies and commands are not steps of this request
@@ -105,7 +109,7 @@ export function buildTimeline(
   const op = proposal.kind === "event" ? (proposal.meta?.event?.op ?? "insert") : undefined;
   const rows = [
     ...events.map((e) => ({ at: e.at, seq: e._creationTime, step: describeEvent(e.kind, e.payload, site, op) })),
-    ...rulings.map((r) => ({ at: r.at, seq: r._creationTime, step: describeRuling(r) })),
+    ...rulings.map((r) => ({ at: r.at, seq: r._creationTime, step: describeRuling(r, proposal.kind) })),
   ];
   const steps: Step[] = rows
     .filter((r) => r.step)

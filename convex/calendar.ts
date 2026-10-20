@@ -8,8 +8,11 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, query, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { calendarClaw } from "./adapters/resolve";
+import { checkTime } from "./lib/calendar/availability";
+import { busyFor } from "./lib/calendar/busy";
 import { hasCalendar } from "./lib/google/auth";
 import { atLocalHour, localDaysBetween, localParts } from "./lib/time";
+import { eventIdFor } from "./mail";
 import { requireSurface } from "./surface";
 
 const DAYS = 8; // today and the next 7
@@ -115,6 +118,49 @@ export const refreshAll = internalAction({
       tally[outcome] = (tally[outcome] ?? 0) + 1;
     }
     return tally;
+  },
+});
+
+// ---- the web edit's clash check (KTD10) --------------------------------------------------------
+
+/**
+ * An event card the owner moved on the page: is the new time still clean? Read live, like the
+ * dispatcher, with the card's own event (or the one it moves) left out. Anything short of clean is
+ * "busy", shown as "no longer free". Advisory only: dispatch checks again before it writes.
+ */
+export const checkClash = internalAction({
+  args: { proposalId: v.id("proposals"), startMs: v.number(), endMs: v.number() },
+  handler: async (ctx, { proposalId, startMs, endMs }): Promise<"clear" | "busy" | null> => {
+    const p: Doc<"proposals"> | null = await ctx.runQuery(internal.proposals.get, { proposalId });
+    const ev = p?.meta.event;
+    if (!p || p.status !== "pending" || !ev || ev.startMs !== startMs || ev.endMs !== endMs) return null; // ruled, or edited again since
+    const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.calendar.tenantById, { tenantId: p.tenantId });
+    if (!tenant) return null;
+    let clean = false;
+    try {
+      const claw = calendarClaw(tenant);
+      if (claw) {
+        const slot = { start: startMs, end: endMs };
+        const busy = await busyFor(claw, slot, ev.op === "insert" ? eventIdFor(p._id) : ev.targetEventId);
+        clean = checkTime(slot, { busy, nowMs: Date.now(), timeZone: tenant.timeZone }) === "clean";
+      }
+    } catch {
+      clean = false; // no calendar to read: not known free
+    }
+    const clash = clean ? "clear" : "busy";
+    await ctx.runMutation(internal.calendar.recordClash, { proposalId, startMs, endMs, clash });
+    return clash;
+  },
+});
+
+/** The check's answer, kept only while the card still waits at the time that was checked. */
+export const recordClash = internalMutation({
+  args: { proposalId: v.id("proposals"), startMs: v.number(), endMs: v.number(), clash: v.union(v.literal("clear"), v.literal("busy")) },
+  handler: async (ctx, { proposalId, startMs, endMs, clash }) => {
+    const p = await ctx.db.get(proposalId);
+    const ev = p?.meta.event;
+    if (!p || p.status !== "pending" || !ev || ev.startMs !== startMs || ev.endMs !== endMs) return;
+    await ctx.db.patch(proposalId, { meta: { ...p.meta, event: { ...ev, clash } } });
   },
 });
 

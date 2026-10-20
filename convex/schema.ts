@@ -238,6 +238,7 @@ export default defineSchema({
         previousStartMs: v.optional(v.number()), // a move: where that event sits now
         previousEndMs: v.optional(v.number()),
         eventId: v.optional(v.string()), // once written
+        clash: v.optional(v.union(v.literal("checking"), v.literal("clear"), v.literal("busy"))), // the web edit's clash check (KTD10)
       })),
       // A slot offer (an email card): the times it offers, so a later pick can be matched.
       offer: v.optional(v.object({ slots: v.array(v.object({ start: v.number(), end: v.number() })) })),

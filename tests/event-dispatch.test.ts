@@ -4,12 +4,13 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import { TENANTS } from "../convex/install";
 import { CALENDAR_OWNED, CALENDAR_READ, GMAIL_READ, GMAIL_SEND } from "../convex/lib/google/auth";
 import { eventIdFor } from "../convex/mail";
 import schema from "../convex/schema";
+import { surfaceKey } from "../convex/surface";
 
 const modules = import.meta.glob("../convex/**/*.ts");
 const ENV = ["HTR_RULING_SECRET", "CONVEX_SITE_URL", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "HTR_NTFY_TOPIC"];
@@ -323,6 +324,30 @@ describe("insert", () => {
     expect((await get(t, id)).status).toBe("failed");
     expect(w.calls).toEqual([]);
     expect(w.sent).toEqual([]);
+  });
+});
+
+describe("edited on the page (U8)", () => {
+  test("a time edited to a free slot is what approval writes, with the edited title, length and attendees", async () => {
+    const { t, tenantId, messageId } = await setup();
+    const w = world();
+    vi.stubGlobal("fetch", w.f);
+    const id = await card(t, tenantId, messageId, {}, { status: "pending" });
+    const key = await surfaceKey("ben");
+    const later = START + 60 * MIN; // Wed 3:00 PM New York
+    expect(await t.mutation(api.rulings.editEvent, {
+      slug: "ben", key, proposalId: id, title: "Site visit", startMs: later, durationMin: 60, attendees: ["sam@acme.co", "kim@acme.co"],
+    })).toBe("Saved. Checking your calendar for the new time.");
+    expect(await t.mutation(api.rulings.ruleFromSurface, { slug: "ben", key, proposalId: id, verdict: "sign" })).toContain("Sending");
+    expect(await t.action(internal.mail.dispatch, { proposalId: id })).toBe("sent");
+
+    const inserts = writes(w.calls);
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].body).toMatchObject({
+      id: hex(id), summary: "Site visit", attendees: [{ email: "sam@acme.co" }, { email: "kim@acme.co" }],
+      start: { dateTime: iso(later), timeZone: ZONE }, end: { dateTime: iso(later + 60 * MIN), timeZone: ZONE },
+    });
+    expect((await get(t, id)).status).toBe("sent");
   });
 });
 
