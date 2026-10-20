@@ -11,6 +11,11 @@
 // words the owner sent instead, and the model is told to match the owner, not the earlier
 // drafts. The owner never confirms twice; the edit is the lesson. What the drafter had in front
 // of it is kept on the proposal as `grounding`, so the owner can see why the draft says what it says.
+//
+// Scheduling (KTD6): for a tenant whose calendar HTR can read, a small extraction call first says
+// whether the email asks to meet; code decides from the calendar (lib/calendar/intent.ts) and the
+// draft call writes the reply to match. A clean time is an event card, otherwise a slot offer;
+// anything off is an ordinary reply. Tenants without the calendar draft exactly as before.
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -18,15 +23,18 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { requestDigest } from "./digest";
 import { appendEvent } from "./events";
-import { llmClaw, readerClaw } from "./adapters/resolve";
+import type { CalendarClaw } from "./adapters/ports";
+import { calendarClaw, llmClaw, readerClaw } from "./adapters/resolve";
 import { profileSender, retrieve, type Profile } from "./knowledge";
 import { MAX_LESSONS, toLessons, type Lesson } from "./lib/drafter/lessons";
+import { formatSlot, type Interval } from "./lib/calendar/availability";
+import { decide, INTENT_SYSTEM, intentPayload, parseIntent, scheduleNote, type Decision } from "./lib/calendar/intent";
 import { notesFromChunks } from "./lib/knowledge/chunk";
 import { linksIn } from "./lib/knowledge/links";
 import { rankPages } from "./lib/knowledge/rank";
 import { findDeadline } from "./lib/reader/deadline";
 import { latestUnanswered, type Msg } from "./lib/reader/waiting";
-import { bySource, pendingFor, propose, supersede } from "./proposals";
+import { bySource, pendingFor, propose, redraftable, supersede } from "./proposals";
 import { grounding } from "./schema";
 
 export const SYSTEM =
@@ -47,6 +55,13 @@ export const SYSTEM =
   "Otherwise gap is null. " +
   'Return JSON: {"body": string, "basis": [verbatim quotes from their message the reply rests on], "gap": string | null}.';
 
+/** Added to SYSTEM only when the calendar decided something, so every other draft is unchanged. */
+export const SCHEDULE_RULES =
+  " schedule is what the owner's calendar decided, already checked: never accept, offer, or suggest any other time. " +
+  "accept_time: confirm that time and say a calendar invite is on its way. " +
+  "offer_slots: say the owner can do any of these and ask which works, listing each slot exactly as written, one per line. " +
+  "confirm_move: confirm the meeting moves from the old time to the new one and that an updated invite follows.";
+
 export type DraftRequest = {
   businessName: string;
   ownerName: string;
@@ -60,6 +75,7 @@ export type DraftRequest = {
   linkNotes?: Array<{ url: string; title?: string; text: string }>; // the pages they linked, read at draft time
   facts?: Fact[]; // what the owner has told the room, newest first
   lessons?: Lesson[]; // the owner's recent corrections for this tenant, newest first
+  schedule?: Record<string, unknown>; // what the calendar decided (lib/calendar/intent.ts scheduleNote)
 };
 
 export type Fact = { question?: string; answer: string };
@@ -134,13 +150,16 @@ export function userPayload(req: DraftRequest): string {
     owner_corrections: lessons.length
       ? lessons.map((l) => ({ their_message: l.theirMessage, first_draft: l.draft, owner_sent: l.sent }))
       : null,
+    // Only when there is one: a draft the calendar had no say in sees exactly what it always did.
+    ...(req.schedule ? { schedule: req.schedule } : {}),
   });
 }
 
 export async function callModel(req: DraftRequest, tenant: Doc<"tenants"> | null): Promise<Draft> {
   const llm = llmClaw(tenant);
   if (!llm) throw new Error("no model claw: set OPENAI_API_KEY (or the tenant's adapters.llm)");
-  const content = await llm.chat([{ role: "system", content: SYSTEM }, { role: "user", content: userPayload(req) }], { json: true });
+  const system = req.schedule ? SYSTEM + SCHEDULE_RULES : SYSTEM;
+  const content = await llm.chat([{ role: "system", content: system }, { role: "user", content: userPayload(req) }], { json: true });
   return toDraft(content, req);
 }
 
@@ -155,6 +174,7 @@ export type DraftContext = {
   facts: Doc<"facts">[];
   lessons: Lesson[];
   already: boolean;
+  offer?: Interval[]; // the slots on the last offer sent in this thread, for matching a pick
 };
 
 export const MAX_FACTS = 30;
@@ -182,10 +202,23 @@ export const context = internalQuery({
     const knowledge = (await ctx.db.query("knowledge").withIndex("by_tenant_url", (q) => q.eq("tenantId", msg.tenantId)).take(50)).sort((a, b) => a.url.length - b.url.length || (a.url < b.url ? -1 : 1));
     const facts = await ctx.db.query("facts").withIndex("by_tenant_at", (q) => q.eq("tenantId", msg.tenantId)).order("desc").take(MAX_FACTS);
     const lessons = await recentLessons(ctx, msg.tenantId);
-    const already = msg.vendorRef ? await bySource(ctx, msg.tenantId, msg.channel, msg._id) : null;
-    return { msg, tenant, thread: [...thread, ...outbound].sort((a, b) => a.at - b.at), contact, knowledge, facts, lessons, already: already !== null };
+    const prior = msg.vendorRef ? await bySource(ctx, msg.tenantId, msg.channel, msg._id) : null;
+    // An event card that expired (unruled, or no longer free at approval) asks for a fresh draft for this message (KTD9).
+    const already = prior !== null && !redraftable(prior);
+    const offer = await lastOffer(ctx, inThread.filter((m) => m.direction === "in" && m._id !== msg._id));
+    return { msg, tenant, thread: [...thread, ...outbound].sort((a, b) => a.at - b.at), contact, knowledge, facts, lessons, already, offer };
   },
 });
+
+/** The newest sent slot offer drafted for a message in this thread. */
+async function lastOffer(ctx: QueryCtx, inbound: Doc<"messages">[]): Promise<Interval[] | undefined> {
+  let best: Doc<"proposals"> | null = null;
+  for (const m of inbound) {
+    const p = await bySource(ctx, m.tenantId, m.channel, m._id);
+    if (p?.status === "sent" && p.meta.offer && (!best || (p.sentAt ?? p.createdAt) > (best.sentAt ?? best.createdAt))) best = p;
+  }
+  return best?.meta.offer?.slots;
+}
 
 /**
  * The owner's last edits for this tenant, newest first: the draft each replaced and the words
@@ -203,6 +236,15 @@ async function recentLessons(ctx: QueryCtx, tenantId: Id<"tenants">): Promise<Le
   return toLessons(rows);
 }
 
+const interval = v.object({ start: v.number(), end: v.number() });
+const eventCard = v.object({
+  op: v.union(v.literal("insert"), v.literal("move")), title: v.string(), startMs: v.number(), endMs: v.number(), timeZone: v.string(),
+  attendees: v.array(v.string()), targetEventId: v.optional(v.string()), previousStartMs: v.optional(v.number()), previousEndMs: v.optional(v.number()),
+});
+
+/** Email and event cards to one address answer the same person: one family for superseding (R9). */
+const family = (kind: Doc<"proposals">["kind"]) => (kind === "event" ? "email" : kind);
+
 export const record = internalMutation({
   args: {
     messageId: v.id("messages"),
@@ -212,21 +254,27 @@ export const record = internalMutation({
     toName: v.optional(v.string()),
     grounding: v.optional(grounding),
     gap: v.optional(v.string()),
+    event: v.optional(eventCard), // an event card (KTD4)
+    offer: v.optional(v.array(interval)), // a slot offer: an email card carrying the slots it offers
   },
-  handler: async (ctx, { messageId, body, basis, deadline, toName, grounding, gap }) => {
+  handler: async (ctx, { messageId, body, basis, deadline, toName, grounding, gap, event, offer }) => {
     const msg = await ctx.db.get(messageId);
     if (!msg) throw new Error("draft for unknown message");
     const tenant = await ctx.db.get(msg.tenantId);
     if (!tenant) throw new Error("unknown tenant");
-    const kind = msg.channel === "sms" ? "sms" : "email";
+    const kind = msg.channel === "sms" ? "sms" : event ? "event" : "email";
     const p = await propose(ctx, {
       tenantId: msg.tenantId, toAddress: msg.fromAddress, toName, body, basis, deadline, kind,
       sourceKind: msg.channel, sourceId: msg._id, grounding, gap, priority: msg.meta.priority?.level,
-      meta: { subject: msg.meta.subject, threadId: msg.threadId, messageId: msg.vendorRef, references: msg.meta.references },
+      meta: {
+        subject: msg.meta.subject, threadId: msg.threadId, messageId: msg.vendorRef, references: msg.meta.references,
+        ...(event && kind === "event" ? { event } : {}),
+        ...(offer?.length && kind === "email" ? { offer: { slots: offer } } : {}),
+      },
     });
     // The newest message is the one to answer; older pending drafts to this address are moot.
     for (const older of await pendingFor(ctx, msg.tenantId)) {
-      if (older._id !== p._id && older.toAddress === p.toAddress && older.kind === kind) await supersede(ctx, older._id);
+      if (older._id !== p._id && older.toAddress === p.toAddress && family(older.kind) === family(kind)) await supersede(ctx, older._id);
     }
     await requestDigest(ctx, tenant);
     return p._id;
@@ -295,6 +343,48 @@ export async function readLinks(ctx: ActionCtx, msg: Doc<"messages">, tenant: Do
   return out;
 }
 
+const MOVE_WINDOW_MS = 30 * 86_400_000;
+
+/**
+ * KTD6: what the calendar says about this email, or none. Only a tenant whose calendar resolves
+ * gets past the first lines; a calendar that won't resolve (a mail-only grant) or a failed
+ * extraction is none, and the draft goes on as an ordinary reply.
+ */
+export async function planSchedule(ctx: ActionCtx, c: DraftContext, theirMessage: string, prior: string[], name: string, nowMs: number): Promise<Decision> {
+  const none: Decision = { kind: "none" };
+  if (c.msg.channel !== "email") return none;
+  let claw: CalendarClaw | null;
+  try {
+    claw = calendarClaw(c.tenant);
+  } catch {
+    return none; // granted without the calendar scopes: the heartbeat says so
+  }
+  const llm = llmClaw(c.tenant);
+  if (!claw || !llm) return none;
+  const zone = c.tenant.timeZone;
+  let content: string;
+  try {
+    content = await llm.chat([
+      { role: "system", content: INTENT_SYSTEM },
+      { role: "user", content: intentPayload({ nowMs, timeZone: zone, theirMessage, prior, offer: c.offer }) },
+    ], { json: true });
+  } catch {
+    return none;
+  }
+  const intent = parseIntent(content, zone);
+  const events = intent.kind === "move"
+    ? await ctx.runQuery(internal.calendar.eventsIn, { tenantId: c.tenant._id, startMs: nowMs, endMs: nowMs + MOVE_WINDOW_MS })
+    : undefined;
+  return await decide({ intent, claw, nowMs, timeZone: zone, sender: c.msg.fromAddress, name, offer: c.offer, events });
+}
+
+/** An offer's body names every slot it offers, so the stored slots and the words agree. */
+export function withSlots(body: string, d: Decision, timeZone: string): string {
+  if (d.kind !== "offer") return body;
+  const missing = d.slots.map((s) => formatSlot(s.start, timeZone)).filter((s) => !body.includes(s));
+  return missing.length ? `${body}\n\n${missing.join("\n")}` : body;
+}
+
 /** The job: scheduled by mail.receive for every inbound message from a person. Idempotent. */
 export const draft = internalAction({
   args: { messageId: v.id("messages") },
@@ -327,12 +417,16 @@ export const draft = internalAction({
       ? { text: fromChunks.text, used: fromChunks.used.map((url) => c.knowledge.find((k) => k.url === url) ?? { url, title: undefined, fetchedAt: Date.now() }) }
       : trimNotes(rankPages(c.knowledge, question));
     const businessNotes = notes?.text;
+    const theirMessage = (msg.meta.subject ? `Subject: ${msg.meta.subject}\n\n` : "") + msg.body;
+    const plan = await planSchedule(ctx, c, theirMessage, prior, name ?? msg.fromAddress, now);
+    const schedule = scheduleNote(plan, tenant.timeZone);
     const req: DraftRequest = {
       businessName: tenant.displayName, ownerName: tenant.owner.name, counterparty: name ?? msg.fromAddress,
-      channel: msg.channel, theirMessage: (msg.meta.subject ? `Subject: ${msg.meta.subject}\n\n` : "") + msg.body,
+      channel: msg.channel, theirMessage,
       prior, deadlineHint: hint, businessNotes, senderNotes: trimProfile(profile), lessons: c.lessons,
       linkNotes: linkNotes.map((l) => ({ url: l.url, title: l.title, text: l.markdown })),
       facts: c.facts.map((f) => ({ question: f.question, answer: f.statement ?? f.answer })),
+      ...(schedule ? { schedule } : {}),
     };
     const d = await callModel(req, tenant);
     const grounding = {
@@ -341,7 +435,10 @@ export const draft = internalAction({
       facts: c.facts.length ? c.facts.map((f) => ({ question: f.question, at: f.at })) : undefined,
       links: linkNotes.length ? linkNotes.map((l) => ({ url: l.url, title: l.title, fetchedAt: l.fetchedAt })) : undefined,
     };
-    return await ctx.runMutation(internal.drafter.record, { messageId, body: d.body, basis: d.basis, deadline, toName: name, grounding, gap: d.gap });
+    return await ctx.runMutation(internal.drafter.record, {
+      messageId, body: withSlots(d.body, plan, tenant.timeZone), basis: d.basis, deadline, toName: name, grounding, gap: d.gap,
+      ...(plan.kind === "event" ? { event: plan.event } : plan.kind === "offer" ? { offer: plan.slots } : {}),
+    });
   },
 });
 
