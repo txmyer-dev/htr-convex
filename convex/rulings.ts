@@ -240,7 +240,9 @@ export async function clearHold(ctx: MutationCtx, tenant: Tenant) {
 
 /**
  * Overdue drafts stop waiting: tell the counterparty (the one thing the assistant may do
- * alone), and re-list the item so it heads the next digest. Never sends the draft.
+ * alone), and re-list the item so it heads the next digest. Never sends the draft. An event card
+ * is never re-listed at its old time: it closes and its email is drafted again, which checks the
+ * calendar afresh (R17, KTD9).
  */
 export async function expirePass(ctx: MutationCtx, tenant: Tenant, now = Date.now()): Promise<Id<"proposals">[]> {
   const expired: Id<"proposals">[] = [];
@@ -248,6 +250,14 @@ export async function expirePass(ctx: MutationCtx, tenant: Tenant, now = Date.no
     if (!isOverdue(p, now)) continue;
     if ((await expire(ctx, p._id)) === null) continue;
     await appendEvent(ctx, tenant._id, "proposal.expired", { proposalId: p._id });
+    if (p.kind === "event") {
+      if (p.sourceKind === "email" && p.sourceId) {
+        await ctx.scheduler.runAfter(0, internal.drafter.draft, { messageId: p.sourceId as Id<"messages"> });
+      }
+      await record(ctx, tenant._id, p._id, p.digestId, "clock", "", "expired");
+      expired.push(p._id);
+      continue;
+    }
     const first = await recordAction(ctx, tenant._id, `proposal:${p._id}:expired_notice`, "send_mail", { to: p.toAddress, reason: "expired" });
     if (first && p.kind === "email") {
       await ctx.scheduler.runAfter(0, internal.mail.sendNotice, {

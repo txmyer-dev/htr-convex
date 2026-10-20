@@ -47,8 +47,9 @@ export const build = internalMutation({
     if (!tenant) throw new Error("unknown tenant");
     if (weekly) {
       // Last call was last week: what is still waiting now is dropped, quietly (no notice goes out).
+      // Not an event card: its deadline before the meeting is its only expiry, and it redrafts (KTD9).
       for (const p of await pendingFor(ctx, tenantId)) {
-        if (p.lastCallAt === undefined) continue;
+        if (p.lastCallAt === undefined || p.kind === "event") continue;
         if ((await expire(ctx, p._id)) !== null) await appendEvent(ctx, tenantId, "proposal.last_call_passed", { proposalId: p._id });
       }
     }

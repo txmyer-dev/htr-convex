@@ -242,6 +242,9 @@ const eventCard = v.object({
   attendees: v.array(v.string()), targetEventId: v.optional(v.string()), previousStartMs: v.optional(v.number()), previousEndMs: v.optional(v.number()),
 });
 
+/** An event card's latest deadline: this long before the meeting starts (KTD9). */
+export const EVENT_LEAD_MS = 2 * 3_600_000;
+
 /** Email and event cards to one address answer the same person: one family for superseding (R9). */
 const family = (kind: Doc<"proposals">["kind"]) => (kind === "event" ? "email" : kind);
 
@@ -263,8 +266,10 @@ export const record = internalMutation({
     const tenant = await ctx.db.get(msg.tenantId);
     if (!tenant) throw new Error("unknown tenant");
     const kind = msg.channel === "sms" ? "sms" : event ? "event" : "email";
+    // KTD9: an event card stops waiting two hours before its meeting, if that comes first.
+    const due = event && kind === "event" ? Math.min(deadline ?? Infinity, event.startMs - EVENT_LEAD_MS) : deadline;
     const p = await propose(ctx, {
-      tenantId: msg.tenantId, toAddress: msg.fromAddress, toName, body, basis, deadline, kind,
+      tenantId: msg.tenantId, toAddress: msg.fromAddress, toName, body, basis, deadline: due, kind,
       sourceKind: msg.channel, sourceId: msg._id, grounding, gap, priority: msg.meta.priority?.level,
       meta: {
         subject: msg.meta.subject, threadId: msg.threadId, messageId: msg.vendorRef, references: msg.meta.references,
