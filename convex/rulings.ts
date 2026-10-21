@@ -241,6 +241,7 @@ export const editEvent = mutation({
     const title = a.title?.trim();
     if (a.title !== undefined && !title) return "Not saved: the event needs a title.";
     if (a.startMs !== undefined && !Number.isFinite(a.startMs)) return "Not saved: that time isn't a time.";
+    if (a.startMs !== undefined && a.startMs !== ev.startMs && a.startMs - Date.now() < EVENT_LEAD_MS) return "Not saved: that's less than two hours away.";
     if (a.durationMin !== undefined && !(Number.isInteger(a.durationMin) && a.durationMin > 0 && a.durationMin <= MAX_MINUTES)) {
       return "Not saved: the length is whole minutes, up to a day.";
     }

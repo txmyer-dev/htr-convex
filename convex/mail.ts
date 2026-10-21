@@ -379,7 +379,9 @@ async function sendSiteRequest(mail: MailClaw, tenant: Doc<"tenants">, p: Doc<"p
 export const retrySend = action({
   args: { slug: v.string(), key: v.string(), proposalId: v.id("proposals") },
   handler: async (ctx, { slug, key, proposalId }): Promise<DispatchOutcome> => {
-    await ctx.runQuery(internal.tenants.requireSurface, { slug, key });
+    const tenantId = await ctx.runQuery(internal.tenants.requireSurface, { slug, key });
+    const p = await ctx.runQuery(internal.proposals.get, { proposalId });
+    if (!p || p.tenantId !== tenantId || p.status !== "failed") return "nothing to do"; // only this page's own failed cards
     return await ctx.runAction(internal.mail.dispatch, { proposalId });
   },
 });

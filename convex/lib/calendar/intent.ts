@@ -7,6 +7,7 @@
 import type { CalendarClaw } from "../../adapters/ports";
 import { atLocalHour, hhmm, localParts, ymd, zonedToMs } from "../time";
 import { checkTime, findSlots, formatSlot, type Interval } from "./availability";
+import { EVENT_LEAD_MS } from "../proposals/lifecycle";
 import { busyFor } from "./busy";
 
 export type Intent =
@@ -149,7 +150,7 @@ export type DecideInput = {
   sender: string; // the inbound message's address: an insert's only attendee
   name: string; // what to call them in a default title
   offer?: Interval[]; // the slots on the last offer sent in this thread
-  events?: SnapshotEvent[]; // the snapshot, for a move
+  events?: SnapshotEvent[]; // primary's events in the next 30 days, for a move
 };
 
 /**
@@ -172,7 +173,8 @@ export async function decide(a: DecideInput): Promise<Decision> {
   // One read covers the asked time and every slot the finder may offer.
   const window = { start: nowMs, end: Math.max(atLocalHour(nowMs, timeZone, SLOT_DAYS, 0), want?.end ?? 0) };
   const busy = await busyFor(claw, window);
-  if (want && checkTime(want, { busy, nowMs, timeZone }) === "clean") {
+  // A card for a time under two hours away would expire as it was drafted (KTD9): offer slots instead.
+  if (want && want.start - nowMs >= EVENT_LEAD_MS && checkTime(want, { busy, nowMs, timeZone }) === "clean") {
     return { kind: "event", event: { op: "insert", title, startMs: want.start, endMs: want.end, timeZone, attendees: [a.sender.toLowerCase()] } };
   }
   const slots = findSlots({ busy, nowMs, timeZone, durationMin: want ? Math.round((want.end - want.start) / MIN) : durationMin });
@@ -206,6 +208,7 @@ async function decideMove(a: DecideInput, intent: Extract<Intent, { kind: "move"
   const target = bestMatch(candidates, intent.eventHint);
   if (!target) return NONE;
   const want = { start: intent.newStartMs, end: intent.newStartMs + (target.endMs - target.startMs) };
+  if (want.start - nowMs < EVENT_LEAD_MS) return NONE; // the card would be born expired (KTD9)
   const busy = await busyFor(claw, want, target.eventId);
   if (checkTime(want, { busy, nowMs, timeZone }) !== "clean") return NONE;
   return {

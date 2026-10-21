@@ -29,7 +29,7 @@ import { calendarClaw, llmClaw, readerClaw } from "./adapters/resolve";
 import { profileSender, retrieve, type Profile } from "./knowledge";
 import { MAX_LESSONS, toLessons, type Lesson } from "./lib/drafter/lessons";
 import { formatSlot, type Interval } from "./lib/calendar/availability";
-import { decide, INTENT_SYSTEM, intentPayload, parseIntent, scheduleNote, type Decision } from "./lib/calendar/intent";
+import { decide, INTENT_SYSTEM, intentPayload, parseIntent, scheduleNote, type Decision, type SnapshotEvent } from "./lib/calendar/intent";
 import { notesFromChunks } from "./lib/knowledge/chunk";
 import { linksIn } from "./lib/knowledge/links";
 import { rankPages } from "./lib/knowledge/rank";
@@ -350,12 +350,26 @@ export async function readLinks(ctx: ActionCtx, msg: Doc<"messages">, tenant: Do
 
 const MOVE_WINDOW_MS = 30 * 86_400_000;
 
+/** A move's candidates, read live from primary across the whole window: the desk's snapshot holds only 8 days. Unreadable is none. */
+async function primaryEvents(claw: CalendarClaw, nowMs: number): Promise<SnapshotEvent[]> {
+  try {
+    const primary = (await claw.calendars()).find((c) => c.primary)?.id;
+    if (!primary) return [];
+    return (await claw.events({ start: nowMs, end: nowMs + MOVE_WINDOW_MS }, [primary])).map((e) => ({
+      eventId: e.id, calendarId: e.calendarId, title: e.title, allDay: e.allDay, startMs: e.start, endMs: e.end,
+      status: e.status, attendees: e.attendees, organizerSelf: e.organizerSelf,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * KTD6: what the calendar says about this email, or none. Only a tenant whose calendar resolves
  * gets past the first lines; a calendar that won't resolve (a mail-only grant) or a failed
  * extraction is none, and the draft goes on as an ordinary reply.
  */
-export async function planSchedule(ctx: ActionCtx, c: DraftContext, theirMessage: string, prior: string[], name: string, nowMs: number): Promise<Decision> {
+export async function planSchedule(c: DraftContext, theirMessage: string, prior: string[], name: string, nowMs: number): Promise<Decision> {
   const none: Decision = { kind: "none" };
   if (c.msg.channel !== "email") return none;
   let claw: CalendarClaw | null;
@@ -377,9 +391,7 @@ export async function planSchedule(ctx: ActionCtx, c: DraftContext, theirMessage
     return none;
   }
   const intent = parseIntent(content, zone);
-  const events = intent.kind === "move"
-    ? await ctx.runQuery(internal.calendar.eventsIn, { tenantId: c.tenant._id, startMs: nowMs, endMs: nowMs + MOVE_WINDOW_MS })
-    : undefined;
+  const events = intent.kind === "move" ? await primaryEvents(claw, nowMs) : undefined;
   return await decide({ intent, claw, nowMs, timeZone: zone, sender: c.msg.fromAddress, name, offer: c.offer, events });
 }
 
@@ -423,7 +435,7 @@ export const draft = internalAction({
       : trimNotes(rankPages(c.knowledge, question));
     const businessNotes = notes?.text;
     const theirMessage = (msg.meta.subject ? `Subject: ${msg.meta.subject}\n\n` : "") + msg.body;
-    const plan = await planSchedule(ctx, c, theirMessage, prior, name ?? msg.fromAddress, now);
+    const plan = await planSchedule(c, theirMessage, prior, name ?? msg.fromAddress, now);
     const schedule = scheduleNote(plan, tenant.timeZone);
     const req: DraftRequest = {
       businessName: tenant.displayName, ownerName: tenant.owner.name, counterparty: name ?? msg.fromAddress,

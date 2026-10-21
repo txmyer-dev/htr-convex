@@ -145,6 +145,10 @@ describe("decide", () => {
     });
     const move: Intent = { kind: "move", eventHint: "weekly sync", newStartMs: pdt(22, 13) };
 
+    test("a move to a time under two hours away is an ordinary reply", async () => {
+      expect((await run({ ...move, newStartMs: NOW + 60 * MIN }, {}, { events: [ev()] })).d).toEqual({ kind: "none" });
+    });
+
     test("one owner-organised event with the sender: a move card, attendees unchanged, checked without itself", async () => {
       const { d, seen } = await run(move, {}, { events: [ev(), ev({ eventId: "x", attendees: ["ben@gmail.com"] }), ev({ eventId: "y", organizerSelf: false }), ev({ eventId: "z", calendarId: "family@group" })] });
       expect(d).toEqual({
@@ -188,6 +192,7 @@ const modules = import.meta.glob("../convex/**/*.ts");
 const ENV = ["HTR_RULING_SECRET", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "OPENAI_API_KEY", "FIRECRAWL_API_KEY"];
 const MAIL_ONLY = `${GMAIL_READ} ${GMAIL_SEND}`;
 const WITH_CALENDAR = `${MAIL_ONLY} ${CALENDAR_READ} ${CALENDAR_OWNED}`;
+const iso = (ms: number) => new Date(ms).toISOString();
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 type World = {
@@ -195,7 +200,7 @@ type World = {
   reply?: string; // the draft call's body
   family?: Array<{ start: string; end: string }>;
   primary?: unknown[];
-  snapshot?: SnapshotEvent[];
+  owned?: unknown[]; // raw events on primary, read by its own id for a move
 };
 
 /** A fake model and a fake Google. Records every calendar request and every model call. */
@@ -217,6 +222,7 @@ function world(w: World) {
       if (url.pathname === "/calendar/v3/users/me/calendarList") return json({ items: [{ id: "ben@gmail.com", summary: "Ben", primary: true }, { id: "family@group", summary: "Family" }] });
       if (url.pathname === "/calendar/v3/freeBusy") return json({ calendars: { "family@group": { busy: w.family ?? [] } } });
       if (url.pathname === "/calendar/v3/calendars/primary/events") return json({ timeZone: ZONE, items: w.primary ?? [] });
+      if (url.pathname === "/calendar/v3/calendars/ben%40gmail.com/events") return json({ timeZone: ZONE, items: w.owned ?? [] });
     }
     return json({ error: { message: `no route for ${url.href}` } }, 500);
   }) as unknown as typeof fetch;
@@ -350,18 +356,18 @@ describe("the draft action", () => {
     expect(p.meta.offer!.slots).toHaveLength(3);
   });
 
-  test("a move over the snapshot: one match is a move card", async () => {
+  test("a move reads Google live: a meeting 11 days out, past the desk's 8-day snapshot, is a move card", async () => {
     const { t, tenantId } = await setup();
-    await t.run((ctx) => ctx.db.insert("calendarEvents", {
-      tenantId, eventId: "e1", calendarId: "ben@gmail.com", calendar: "Ben", title: "Weekly sync", allDay: false,
-      startMs: pdt(21, 10), endMs: pdt(21, 11), status: "confirmed", attendees: ["ben@gmail.com", SAM], organizerSelf: true,
-    }));
-    const g = world({ extraction: '{"intent":"move","eventHint":"sync","newStart":"2026-10-22T13:00"}' });
+    const sync = {
+      id: "e1", status: "confirmed", summary: "Weekly sync", start: { dateTime: iso(pdt(30, 10)) }, end: { dateTime: iso(pdt(30, 11)) },
+      organizer: { self: true }, attendees: [{ email: "ben@gmail.com", self: true }, { email: SAM }],
+    };
+    const g = world({ extraction: '{"intent":"move","eventHint":"sync","newStart":"2026-10-30T13:00"}', owned: [sync] });
     vi.stubGlobal("fetch", g.f);
-    const pid = await t.action(internal.drafter.draft, { messageId: await inbound(t, tenantId, "Can we push our sync to Thursday 1pm?") });
+    const pid = await t.action(internal.drafter.draft, { messageId: await inbound(t, tenantId, "Can we push our sync to 1pm that Friday?") });
     const p = (await t.run((ctx) => ctx.db.get(pid!)))!;
     expect(p.kind).toBe("event");
-    expect(p.meta.event).toMatchObject({ op: "move", targetEventId: "e1", startMs: pdt(22, 13), endMs: pdt(22, 14), previousStartMs: pdt(21, 10), attendees: ["ben@gmail.com", SAM] });
+    expect(p.meta.event).toMatchObject({ op: "move", targetEventId: "e1", startMs: pdt(30, 13), endMs: pdt(30, 14), previousStartMs: pdt(30, 10), attendees: ["ben@gmail.com", SAM] });
   });
 
   test("malformed extraction output is an ordinary reply", async () => {

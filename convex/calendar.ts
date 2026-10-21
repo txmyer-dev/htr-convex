@@ -164,13 +164,6 @@ export const recordClash = internalMutation({
 
 // ---- reading it ----------------------------------------------------------------------------------
 
-/** Snapshot rows overlapping [startMs, endMs), in start order. Move matching reads this. */
-export const eventsIn = internalQuery({
-  args: { tenantId: v.id("tenants"), startMs: v.number(), endMs: v.number() },
-  handler: async (ctx, { tenantId, startMs, endMs }): Promise<Doc<"calendarEvents">[]> =>
-    (await rowsOf(ctx, tenantId, endMs)).filter((e) => e.endMs > startMs),
-});
-
 /**
  * The desk's Today zone: the stored window, one entry per local day in the tenant's zone, each
  * event under every day it touches. refreshedAt is when the snapshot was taken; error is the last

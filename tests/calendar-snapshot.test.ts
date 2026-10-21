@@ -169,14 +169,3 @@ describe("today", () => {
   });
 });
 
-describe("eventsIn", () => {
-  test("returns the snapshot rows that overlap a window, for move matching", async () => {
-    const { t, ben } = await setup();
-    vi.stubGlobal("fetch", google({ events: firstEvents() }).f);
-    await t.action(internal.calendar.refresh, { tenantId: ben });
-    const hits = await t.query(internal.calendar.eventsIn, { tenantId: ben, startMs: MEET + 10 * 60_000, endMs: MEET + 20 * 60_000 });
-    expect(hits.map((e) => e.eventId)).toEqual(["m1"]);
-    const offsiteDay2 = await t.query(internal.calendar.eventsIn, { tenantId: ben, startMs: atLocalHour(now, ZONE, 3, 9), endMs: atLocalHour(now, ZONE, 3, 10) });
-    expect(offsiteDay2.map((e) => e.eventId)).toEqual(["f1"]);
-  });
-});

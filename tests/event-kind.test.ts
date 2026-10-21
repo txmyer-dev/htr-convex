@@ -148,6 +148,16 @@ describe("an event card through the funnel", () => {
     expect(f.mock.calls.filter(([u]) => String(u).startsWith("https://ntfy.sh"))).toHaveLength(0);
   });
 
+  test("Retry on another tenant's page leaves a failed card alone", async () => {
+    const { t, tenant } = await setup();
+    const { _id, _creationTime, ...doc } = tenant;
+    await t.run(async (ctx) => ctx.db.insert("tenants", { ...doc, slug: "other" }));
+    const id = await card(t, tenant._id, { status: "failed", error: "calendar 500" });
+    const outcome = await t.action(api.mail.retrySend, { slug: "other", key: await surfaceKey("other"), proposalId: id });
+    expect(outcome).toBe("nothing to do");
+    expect((await t.run(async (ctx) => ctx.db.get(id)))!).toMatchObject({ status: "failed", error: "calendar 500" });
+  });
+
   test("Skip on the page drops a failed event card; a failed email card stays failed", async () => {
     const { t, tenant } = await setup();
     const key = await surfaceKey(tenant.slug);
