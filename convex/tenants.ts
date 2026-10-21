@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
+import { tenantFields } from "./schema";
 import { liveSurfaceUrl, requireSurface as requireSurfaceKey } from "./surface";
 
 export const get = internalQuery({
@@ -26,6 +27,19 @@ export const setChannels = internalMutation({
     const t = await ctx.db.get(tenantId);
     if (!t) throw new Error("unknown tenant");
     await ctx.db.patch(tenantId, { channels: { ...t.channels, ...channels } }); // a Gmail grant stays
+  },
+});
+
+/**
+ * `npx convex run tenants:setTasks '{"slug":"tony","tasks":{...}}'`: point one tenant's task
+ * lists somewhere new without install:apply, which would also reset the rest of the tenant.
+ */
+export const setTasks = internalMutation({
+  args: { slug: v.string(), tasks: tenantFields.tasks },
+  handler: async (ctx, { slug, tasks }) => {
+    const t = await ctx.db.query("tenants").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();
+    if (!t) throw new Error(`unknown tenant ${slug}`);
+    await ctx.db.patch(t._id, { tasks });
   },
 });
 
