@@ -105,6 +105,25 @@ describe("an event card's deadline", () => {
     expect((await get(t, pid)).status).toBe("expired");
   });
 
+  test("a meeting under two hours out is a slot offer, never a card born expired", async () => {
+    const { t, tenantId } = await setup();
+    vi.stubGlobal("fetch", world({ extraction: '{"intent":"propose_time","start":"2026-10-19T10:30"}' }).f);
+    const pid = (await t.action(internal.drafter.draft, { messageId: await inbound(t, tenantId, "Can we talk at 10:30 today?") }))!;
+    const p = await get(t, pid);
+    expect(p.kind).toBe("email");
+    expect(p.meta.event).toBeUndefined();
+    expect(p.meta.offer!.slots.every((s) => s.start >= NOW + 2 * HOUR)).toBe(true);
+  });
+
+  test("an edit to a time under two hours out is refused", async () => {
+    const { t, tenantId } = await setup();
+    vi.stubGlobal("fetch", world({ extraction: '{"intent":"propose_time","start":"2026-10-20T14:00"}' }).f);
+    const pid = (await t.action(internal.drafter.draft, { messageId: await inbound(t, tenantId, "Tuesday 2pm?") }))!;
+    const key = await surfaceKey("ben");
+    expect(await t.mutation(api.rulings.editEvent, { slug: "ben", key, proposalId: pid, startMs: NOW + HOUR })).toBe("Not saved: that's less than two hours away.");
+    expect((await get(t, pid)).meta.event!.startMs).toBe(pdt(20, 14));
+  });
+
   test("a meeting a week out keeps the normal deadline", async () => {
     const { t, tenantId } = await setup();
     vi.stubGlobal("fetch", world({ extraction: '{"intent":"propose_time","start":"2026-10-26T14:00"}' }).f);
