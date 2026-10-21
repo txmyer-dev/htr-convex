@@ -12,7 +12,7 @@ import { internalAction, internalMutation, type ActionCtx, type MutationCtx } fr
 import { appendEvent } from "./events";
 import { plainOverview, renderDigest, renderMeeting, renderMeetings, type DigestItem, type MeetingItem } from "./lib/digest/render";
 import { describeGrounding } from "./lib/knowledge/domain";
-import { hasMail, notifyClaw } from "./adapters/resolve";
+import { notifyClaw } from "./adapters/resolve";
 import { noticeFor } from "./lib/notify/ntfy";
 import { eventWhen, eventWho, signLabel } from "./lib/proposals/lifecycle";
 import type { Notice } from "./adapters/ports";
@@ -208,7 +208,9 @@ export const run = internalAction({
     const tenant: Doc<"tenants"> | null = await ctx.runQuery(internal.tenants.get, { tenantId });
     if (!tenant) throw new Error("unknown tenant");
     await pushNew(ctx, tenant, built);
-    if (!hasMail(tenant) && notifyClaw(tenant)) return built.digestId; // the phone is the channel; no mailbox to mail from
+    // The phone and the desk are the channel: no email to the owner once push is set up (htr-desk-is-where-the-owner-acts).
+    // Email is only the fallback for an install with no push.
+    if (notifyClaw(tenant)) return built.digestId;
     if (tenant.owner.weeklyDigest && !weekly) return built.digestId; // pushes now, the email on its weekly day
     const mail = await digestEmail(tenant, built, weekly);
     const ref = await ctx.runAction(internal.mail.sendToOwner, { tenantId, ...mail });

@@ -68,6 +68,30 @@ describe("the digest run", () => {
     expect(sent.map((s) => s.title)).toEqual(["Task → WotAI — tasks", "Task → WotAI — tasks"]);
     expect(sent).toHaveLength(2); // the first item was not pushed again
   });
+
+  test("with push set up, a tenant with a mailbox gets the push and no digest email", async () => {
+    process.env.HTR_RULING_SECRET = "test-secret";
+    process.env.CONVEX_SITE_URL = "https://test.convex.site";
+    process.env.HTR_NTFY_TOPIC = "htr-test";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      urls.push(String(u));
+      return new Response("{}", { status: 200 });
+    }));
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.install.applyInternal, {});
+    const tenant = (await t.run(async (ctx) => await ctx.db.query("tenants").first()))!;
+    await t.run(async (ctx) => ctx.db.patch(tenant._id, {
+      owner: { ...tenant.owner, weeklyDigest: undefined }, // as the VM's tenant: no weekly email day
+      adapters: { ...tenant.adapters, mail: { kind: "gmail" } },
+      channels: { ...tenant.channels, gmail: { address: "txmyer@gmail.com", refreshToken: "rt-notify", grantedAt: 1 } },
+    }));
+    const item = { id: "i1", type: "my_commitment", what: "Post the call change", quote: "I'll post it.", lane: "wotai", privacy: "shareable", destination: "clickup.task" };
+    await t.mutation(internal.tasks.receiveCallItems, { tenantId: tenant._id, session: "s", items: [item] });
+
+    await t.action(internal.digest.run, { tenantId: tenant._id });
+    expect(urls).toEqual(["https://ntfy.sh"]); // one push; nothing to Google, nothing to AgentMail
+  });
 });
 
 describe("tapping from the ntfy web app", () => {
