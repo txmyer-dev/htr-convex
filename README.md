@@ -1,5 +1,9 @@
 # Hold the Room, on Convex
 
+> **Convex "All Gas" hackathon entry, built on OpenAI.** `gpt-5.4-mini` writes every draft
+> as a reply plus the quotes it rests on, and `text-embedding-3-small` powers site and message
+> retrieval. The submitted version is tagged [`allgas-submission`](https://github.com/txmyer-dev/htr-convex/tree/allgas-submission).
+
 An email assistant for people who run on their inbox: it reads every message, drafts every reply in
 your voice, and sends nothing until you approve.
 
@@ -12,8 +16,8 @@ told a reply is coming, and the item heads the next digest.
 
 **Run your own:** [INSTALL.md](INSTALL.md) — your server, your Gmail, your keys; `npm run setup` does the rest.
 
-**Live:** [famous-spider-906.convex.site](https://famous-spider-906.convex.site) — the front door
-itself; take an inbox and run the whole loop in thirty seconds. **Who it's for:** a bakery, a clinic
+**Demo:** the hosted hackathon demo is offline now that the project is archived; run your own with
+[INSTALL.md](INSTALL.md) to see the whole loop. **Who it's for:** a bakery, a clinic
 front desk, a contractor, a small law office — anyone who lives in their inbox, no developer required.
 **The stack, and the real work each piece does:**
 
@@ -36,7 +40,7 @@ surface included, is served from one Convex deployment.
 
 ## Try it
 
-The front door is the live app itself: [famous-spider-906.convex.site](https://famous-spider-906.convex.site).
+During the hackathon the front door was the live app itself (now offline; run your own to try it).
 Give it a name, your email, a business, and (optionally) its website. You get an inbox address
 and the live page. Email the address from any account, or press "Send a customer email" on the
 page. A draft in your voice is on the page in seconds, the numbered digest is in your own inbox a
